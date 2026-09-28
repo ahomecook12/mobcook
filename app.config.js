@@ -1,14 +1,11 @@
-const fs = require("fs");
-const path = require("path");
-
 module.exports = {
   expo: {
-    name: "Lucky Charm Creations",
-    slug: "mobileshop",
+    name: "Arunas Kitchen",
+    slug: "mobcook",
     version: "1.0.0",
     orientation: "portrait",
-    icon: "./assets/images/lcc.png",
-    scheme: "mobileshop",
+    icon: "./assets/images/ak.png",
+    scheme: "arunaskitchen",
     userInterfaceStyle: "automatic",
 
     ios: {
@@ -19,11 +16,11 @@ module.exports = {
       googleServicesFile:
         process.env.GOOGLE_SERVICES_JSON || "./google-services.json",
       predictiveBackGestureEnabled: false,
-      package: "com.anupama1.mobileshop",
+      package: "com.ahome.arunaskitchen",
 
       adaptiveIcon: {
         backgroundColor: "#E6F4FE",
-        foregroundImage: "./assets/images/lcc.png",
+        foregroundImage: "./assets/images/ak.png",
       },
     },
 
@@ -56,9 +53,9 @@ module.exports = {
 
     extra: {
       router: {},
-      eas: {
-        projectId: "7222c7f8-fbc1-4f00-a92c-50a1af1e6414",
-      },
+        "eas": {
+          "projectId": "e18ab6d0-9a60-4990-9a19-e713e08a6f09"
+      }
     },
   },
 };

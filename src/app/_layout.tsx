@@ -148,7 +148,7 @@ function useNotificationObserver() {
  *
  * Expected URL:
  *
- * mobileshop://auth/reset-password?code=XXXXXXXX
+ * arunaskitchen://auth/reset-password?code=XXXXXXXX
  *
  * The code must be exchanged for a Supabase session before
  * ResetPasswordScreen calls getSession().

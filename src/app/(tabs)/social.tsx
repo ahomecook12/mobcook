@@ -140,7 +140,7 @@ async function sendMessage() {
       body: JSON.stringify({
         name: name.trim(),
         email: email.trim(),
-        subject: "Message from Lucky Charm Creation",
+        subject: `Message from ${STORE.name}`,
         message: message.trim(),
       }),
     });
@@ -233,7 +233,7 @@ async function sendMessage() {
           <Text style={styles.title}>Stay Connected</Text>
 
           <Text style={styles.subtitle}>
-            Follow Lucky Charm Creation or get in touch with us
+            Follow {STORE.name} or get in touch with us
             directly.
           </Text>
         </View>
@@ -331,7 +331,7 @@ async function sendMessage() {
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>
-            Lucky Charm Creation
+            {STORE.name}
           </Text>
 
           <Text style={styles.footerSubtext}>

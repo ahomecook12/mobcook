@@ -38,17 +38,17 @@ export default function LoginScreen() {
    *
    * Because app.json contains:
    *
-   * "scheme": "mobileshop"
+   * "scheme": "arunaskitchen"
    *
    * this becomes:
    *
-   * mobileshop://auth/callback
+   * arunaskitchen://auth/callback
    */
   // const redirectTo = makeRedirectUri({
-  //   scheme: "mobileshop",
+  //   scheme: "arunaskitchen",
   //   path: "auth/callback",
   // });
-const redirectTo = "mobileshop://auth/callback";
+const redirectTo = "arunaskitchen://auth/callback";
   /* =========================================================
      EMAIL / PASSWORD LOGIN
      ========================================================= */
@@ -152,7 +152,7 @@ async function handleGoogleLogin() {
      *
      * Current callback:
      *
-     * mobileshop://auth/callback?code=XXXXXXXX
+     * arunaskitchen://auth/callback?code=XXXXXXXX
      *
      * We must exchange this code for the Supabase session.
      */

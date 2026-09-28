@@ -43,7 +43,7 @@ export default function ForgotPasswordScreen() {
           cleanEmail,
           {
             redirectTo:
-              "mobileshop://auth/reset-password",
+              "arunaskitchen://auth/reset-password",
           },
         );
 

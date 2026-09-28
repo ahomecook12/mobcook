@@ -1,5 +1,5 @@
 export const STORE = {
-  name: "Lucky Charm Creations",
+  name: "Aruna's Kitchen",
 
   colors: {
     background: "#FFF9E6",
@@ -10,3 +10,7 @@ export const STORE = {
     primary: "#B8860B",
   },
 };
+
+export const STORE_LOCALE = "en-IN";
+
+export const CURRENCY_SYMBOL = "₹";

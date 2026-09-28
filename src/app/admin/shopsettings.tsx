@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 // ==========================================================
@@ -166,11 +166,11 @@ export default function ShopSettingsScreen() {
 
   const [storeAddress, setStoreAddress] = useState("");
 
-  const [storeCity, setStoreCity] = useState("");
+  const [storeCity, setStoreCity] = useState("Bangalore");
 
   const [storePostalCode, setStorePostalCode] = useState("");
 
-  const [storeCountry, setStoreCountry] = useState("Switzerland");
+  const [storeCountry, setStoreCountry] = useState("India");
 
   // ========================================================
   // LOAD
@@ -327,11 +327,11 @@ export default function ShopSettingsScreen() {
 
         setStoreAddress(storefront.store_address ?? "");
 
-        setStoreCity(storefront.store_city ?? "");
+        setStoreCity(storefront.store_city ?? "Bangalore");
 
         setStorePostalCode(storefront.store_postal_code ?? "");
 
-        setStoreCountry(storefront.store_country ?? "Switzerland");
+        setStoreCountry(storefront.store_country ?? "India");
       }
     } catch (error) {
       console.error("Load shop settings error:", error);
@@ -1021,11 +1021,11 @@ export default function ShopSettingsScreen() {
 
         store_address: storeAddress.trim() || null,
 
-        store_city: storeCity.trim() || null,
+        store_city: storeCity.trim() || "Bangalore",
 
         store_postal_code: storePostalCode.trim() || null,
 
-        store_country: storeCountry.trim() || "Switzerland",
+        store_country: storeCountry.trim() || "India",
       };
 
       // ----------------------------------------------------
@@ -1611,11 +1611,11 @@ export default function ShopSettingsScreen() {
                 label="Shipping Service"
                 value={shippingMethod}
                 onChangeText={setShippingMethod}
-                placeholder="Swiss Post"
+                placeholder="Porter.."
               />
 
               <Field
-                label="Shipping Price (CHF)"
+                label={`Shipping Price (${CURRENCY_SYMBOL})`}
                 value={shippingPrice}
                 onChangeText={setShippingPrice}
                 placeholder="0"
@@ -1624,7 +1624,7 @@ export default function ShopSettingsScreen() {
 
               <DisplaySwitch
                 label="Free Shipping"
-                description="Set shipping price to CHF 0."
+                description={`Set shipping price to ${CURRENCY_SYMBOL} 0.`}
                 value={freeShipping}
                 onValueChange={setFreeShipping}
               />
@@ -1645,7 +1645,7 @@ export default function ShopSettingsScreen() {
             label="Store Name"
             value={storeName}
             onChangeText={setStoreName}
-            placeholder="Lucky Charm Creation"
+            placeholder={STORE.name}
           />
 
           <Field
@@ -1659,7 +1659,7 @@ export default function ShopSettingsScreen() {
             label="Postal Code"
             value={storePostalCode}
             onChangeText={setStorePostalCode}
-            placeholder="5506"
+            placeholder="560088"
             keyboardType="number-pad"
           />
 
@@ -1667,14 +1667,14 @@ export default function ShopSettingsScreen() {
             label="City"
             value={storeCity}
             onChangeText={setStoreCity}
-            placeholder="Mägenwil"
+            placeholder="Bangalore"
           />
 
           <Field
             label="Country"
             value={storeCountry}
             onChangeText={setStoreCountry}
-            placeholder="Switzerland"
+            placeholder="India"
           />
         </Section>
 

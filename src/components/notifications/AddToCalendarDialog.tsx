@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { Alert } from "react-native";
 import { supabase } from "@/lib/supabase";
+import { STORE_LOCALE } from "@/constants/store";
 
 type AddToCalendarDialogProps = {
   orderId: string;
@@ -137,7 +138,7 @@ export default function AddToCalendarDialog({
   };
 
   const formatDate = (value: Date) => {
-    return value.toLocaleDateString("en-CH", {
+    return value.toLocaleDateString(STORE_LOCALE, {
       day: "numeric",
       month: "short",
       year: "numeric",
@@ -145,7 +146,7 @@ export default function AddToCalendarDialog({
   };
 
   const formatTime = (value: Date) => {
-    return value.toLocaleTimeString("en-CH", {
+    return value.toLocaleTimeString(STORE_LOCALE, {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,

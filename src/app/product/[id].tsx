@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
 import { notifyCartChanged, supabase } from "@/lib/supabase";
 
 type DisplaySettings = {
@@ -537,15 +537,15 @@ export default function ProductDetailScreen() {
               {isOnSale ? (
                 <>
                   <Text style={styles.salePrice}>
-                    CHF {salePrice!.toFixed(2)}
+                    {CURRENCY_SYMBOL} {salePrice!.toFixed(2)}
                   </Text>
 
                   <Text style={styles.originalPrice}>
-                    CHF {product.price.toFixed(2)}
+                    {CURRENCY_SYMBOL} {product.price.toFixed(2)}
                   </Text>
                 </>
               ) : (
-                <Text style={styles.price}>CHF {product.price.toFixed(2)}</Text>
+                <Text style={styles.price}>{CURRENCY_SYMBOL} {product.price.toFixed(2)}</Text>
               )}
             </View>
           )}

@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <rect width="512" height="512" fill="#FDFBF0"/>
+  
+  <!-- Outer Decorative Border -->
+  <rect x="24" y="24" width="464" height="464" rx="12" fill="none" stroke="#4A1A17" stroke-width="4"/>
+  <rect x="34" y="34" width="444" height="444" rx="8" fill="none" stroke="#C6923C" stroke-width="2"/>
+  
+  <!-- Corner Floral Flourishes -->
+  <g fill="#C6923C">
+    <path d="M40,40 Q60,45 55,65 Q45,55 40,40 Z"/>
+    <path d="M472,40 Q452,45 457,65 Q467,55 472,40 Z"/>
+    <path d="M40,472 Q60,467 55,447 Q45,457 40,472 Z"/>
+    <path d="M472,472 Q452,467 457,447 Q467,457 472,472 Z"/>
+  </g>
+
+  <!-- Expanded Green Leaf Motifs (Top Center Arrangement) -->
+  <g fill="#2A5C34">
+    <!-- Center stem leaf -->
+    <path d="M256,70 Q256,40 262,45 Q268,50 256,70 Z"/>
+    <!-- Left side leaves -->
+    <path d="M248,78 Q220,60 228,52 Q236,44 248,78 Z"/>
+    <path d="M242,88 Q200,80 205,70 Q210,60 242,88 Z"/>
+    <path d="M245,100 Q190,110 192,98 Q194,86 245,100 Z"/>
+    <!-- Right side leaves -->
+    <path d="M264,78 Q292,60 284,52 Q276,44 264,78 Z"/>
+    <path d="M270,88 Q312,80 307,70 Q302,60 270,88 Z"/>
+    <path d="M267,100 Q322,110 320,98 Q318,86 267,100 Z"/>
+  </g>
+  
+  <!-- Tiny decorative Gold Ribbon/Heart beneath top leaves -->
+  <path d="M256,118 C250,110 238,110 246,124 L256,134 L266,124 C274,110 262,110 256,118 Z" fill="#C6923C"/>
+
+  <!-- Core Branding Typography -->
+  <!-- "Aruna's" - Highly Prominent, Curvy Script feel via elegant serif adjustments -->
+  <text x="256" y="275" font-family="'Georgia', 'Times New Roman', serif" font-size="82px" font-weight="900" font-style="italic" fill="#4A1A17" text-anchor="middle">Aruna's</text>
+  
+  <!-- Decorative Text Separator Line -->
+  <path d="M140,315 L210,315 M302,315 L372,315" stroke="#C6923C" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="256" cy="315" r="5" fill="#4A1A17"/>
+  <circle cx="236" cy="315" r="3" fill="#C6923C"/>
+  <circle cx="276" cy="315" r="3" fill="#C6923C"/>
+
+  <!-- "KITCHEN" - Scaled Down, Wide Tracking, Caps -->
+  <text x="256" y="375" font-family="'Arial', 'Helvetica', sans-serif" font-size="34px" font-weight="bold" fill="#4A1A17" letter-spacing="12" text-anchor="middle">KITCHEN</text>
+  
+  <!-- Bottom Accent Leaf Arrangement -->
+  <g fill="#2A5C34">
+    <path d="M256,410 Q230,425 210,420 Q225,410 256,410 Z"/>
+    <path d="M256,410 Q282,425 302,420 Q287,410 256,410 Z"/>
+    <path d="M256,410 Q256,435 260,440 Q264,435 256,410 Z"/>
+  </g>
+</svg>

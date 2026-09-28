@@ -1,4 +1,4 @@
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -496,15 +496,15 @@ function ProductCard({
           (isOnSale ? (
             <View style={styles.priceRow}>
               <Text style={styles.salePrice}>
-                CHF {product.sale_price!.toFixed(2)}
+                {CURRENCY_SYMBOL} {product.sale_price!.toFixed(2)}
               </Text>
 
               <Text style={styles.originalPrice}>
-                CHF {product.price.toFixed(2)}
+                {CURRENCY_SYMBOL} {product.price.toFixed(2)}
               </Text>
             </View>
           ) : (
-            <Text style={styles.price}>CHF {product.price.toFixed(2)}</Text>
+            <Text style={styles.price}>{CURRENCY_SYMBOL} {product.price.toFixed(2)}</Text>
           ))}
       </View>
     </Pressable>

@@ -2,7 +2,6 @@ import { notifyNotificationsChanged, supabase } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { CalendarPlus } from "lucide-react-native";
 import AddToCalendarDialog from "@/components/notifications/AddToCalendarDialog";
 import {
   ActivityIndicator,
@@ -15,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { STORE_LOCALE } from "@/constants/store";
 
 type Notification = {
   id: string;
@@ -26,20 +26,23 @@ type Notification = {
   read_at: string | null;
   created_at: string;
 };
+
 type OrderInfo = {
   id: string;
   order_number: string;
   created_at: string;
+  preferred_fulfillment_at: string | null;
 };
 
 export default function NotificationsScreen() {
-  const router = useRouter();
 
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [ordersById, setOrdersById] = useState<Record<string, OrderInfo>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markingAllRead, setMarkingAllRead] = useState(false);
+
   const loadNotifications = useCallback(async () => {
     try {
       const {
@@ -48,8 +51,13 @@ export default function NotificationsScreen() {
 
       if (!user) {
         setNotifications([]);
+        setOrdersById({});
         return;
       }
+
+      /* =====================================================
+         LOAD NOTIFICATIONS
+      ===================================================== */
 
       const { data, error } = await supabase
         .from("notifications")
@@ -57,11 +65,14 @@ export default function NotificationsScreen() {
           "id, type, title, message, order_id, product_id, read_at, created_at",
         )
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
+        .order("created_at", {
+          ascending: false,
+        })
         .limit(50);
 
       if (error) {
         console.error("Unable to load notifications:", error.message);
+
         return;
       }
 
@@ -69,13 +80,28 @@ export default function NotificationsScreen() {
 
       setNotifications(loadedNotifications);
 
+      /* =====================================================
+         LOAD ORDERS NEEDED BY ADMIN NOTIFICATIONS
+
+         IMPORTANT:
+
+         Previously this loaded order information only for:
+
+           admin_order_placed
+
+         We now load it for every admin order notification
+         that contains an order_id.
+
+         This allows customer order-change notifications to
+         offer the same Add to Calendar action.
+      ===================================================== */
+
       const orderIds = Array.from(
         new Set(
           loadedNotifications
             .filter(
               (notification) =>
-                notification.type === "admin_order_placed" &&
-                notification.order_id,
+                notification.type.startsWith("admin_") && notification.order_id,
             )
             .map((notification) => notification.order_id as string),
         ),
@@ -84,7 +110,14 @@ export default function NotificationsScreen() {
       if (orderIds.length > 0) {
         const { data: orders, error: ordersError } = await supabase
           .from("orders")
-          .select("id, order_number, created_at")
+          .select(
+            `
+              id,
+              order_number,
+              created_at,
+              preferred_fulfillment_at
+            `,
+          )
           .in("id", orderIds);
 
         if (ordersError) {
@@ -112,10 +145,15 @@ export default function NotificationsScreen() {
     }
   }, []);
 
+  /* =========================================================
+     INITIAL LOAD + REALTIME
+  ========================================================= */
+
   useEffect(() => {
     void loadNotifications();
 
     let cancelled = false;
+
     let channel: ReturnType<typeof supabase.channel> | null = null;
 
     const setupRealtime = async () => {
@@ -129,7 +167,10 @@ export default function NotificationsScreen() {
 
       const channelName = `mobile-notifications-${user.id}`;
 
-      // Remove any existing channel with this name first.
+      /*
+       * Remove an existing channel with the same name first.
+       */
+
       const existingChannel = supabase
         .getChannels()
         .find((existing) => existing.topic === `realtime:${channelName}`);
@@ -164,6 +205,24 @@ export default function NotificationsScreen() {
 
             return [newNotification, ...current];
           });
+
+          /*
+           * IMPORTANT:
+           *
+           * A realtime notification can arrive before
+           * ordersById contains its order.
+           *
+           * Refresh notification/order metadata so the
+           * calendar button appears immediately for new
+           * admin order-change notifications too.
+           */
+
+          if (
+            newNotification.order_id &&
+            newNotification.type.startsWith("admin_")
+          ) {
+            void loadNotifications();
+          }
         },
       );
 
@@ -177,10 +236,15 @@ export default function NotificationsScreen() {
 
       if (channel) {
         void supabase.removeChannel(channel);
+
         channel = null;
       }
     };
   }, [loadNotifications]);
+
+  /* =========================================================
+     MARK ALL AS READ
+  ========================================================= */
 
   const markAllAsRead = async () => {
     const unreadNotifications = notifications.filter(
@@ -219,6 +283,7 @@ export default function NotificationsScreen() {
       setNotifications((current) =>
         current.map((notification) => ({
           ...notification,
+
           read_at: notification.read_at ?? readAt,
         })),
       );
@@ -236,6 +301,10 @@ export default function NotificationsScreen() {
     }
   };
 
+  /* =========================================================
+     MARK ONE AS READ
+  ========================================================= */
+
   const markAsRead = async (notification: Notification) => {
     if (notification.read_at) {
       return;
@@ -252,6 +321,7 @@ export default function NotificationsScreen() {
 
     if (error) {
       console.error("Failed to mark notification as read:", error);
+
       return;
     }
 
@@ -269,6 +339,10 @@ export default function NotificationsScreen() {
     notifyNotificationsChanged();
   };
 
+  /* =========================================================
+     OPEN NOTIFICATION
+  ========================================================= */
+
   const handleNotificationPress = async (notification: Notification) => {
     await markAsRead(notification);
 
@@ -276,6 +350,7 @@ export default function NotificationsScreen() {
       if (notification.type.startsWith("admin_")) {
         router.push({
           pathname: "/admin/order/[id]",
+
           params: {
             id: notification.order_id,
           },
@@ -283,6 +358,7 @@ export default function NotificationsScreen() {
       } else {
         router.push({
           pathname: "/orders/[id]",
+
           params: {
             id: notification.order_id,
           },
@@ -293,30 +369,60 @@ export default function NotificationsScreen() {
     }
   };
 
+  /* =========================================================
+     REFRESH
+  ========================================================= */
+
   const onRefresh = () => {
     setRefreshing(true);
+
     void loadNotifications();
   };
 
+  /* =========================================================
+     DATE
+  ========================================================= */
+
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-CH", {
+    return new Date(dateString).toLocaleDateString(STORE_LOCALE, {
       day: "numeric",
       month: "short",
       year: "numeric",
     });
   };
 
+  /* =========================================================
+     RENDER NOTIFICATION
+  ========================================================= */
+
   const renderNotification = ({ item }: { item: Notification }) => {
     const unread = !item.read_at;
+
     const hasOrder = Boolean(item.order_id);
-    const isAdminNewOrder = item.type === "admin_order_placed";
+
+    /*
+     * Calendar is available for ANY admin notification
+     * connected to an order.
+     *
+     * Examples:
+     *
+     * admin_order_placed
+     * admin_order_updated
+     * future admin order notification types
+     */
+
+    const isAdminOrderNotification = item.type.startsWith("admin_");
+
     const calendarOrder = item.order_id ? ordersById[item.order_id] : undefined;
+
     return (
       <Pressable
         onPress={() => void handleNotificationPress(item)}
         style={({ pressed }) => [
           styles.notification,
+
           unread && styles.unreadNotification,
+
           pressed && styles.pressed,
         ]}
       >
@@ -347,11 +453,29 @@ export default function NotificationsScreen() {
           <Text style={styles.date}>{formatDate(item.created_at)}</Text>
 
           {hasOrder && <Text style={styles.tapHint}>Tap to view order</Text>}
-          {isAdminNewOrder && hasOrder && calendarOrder && (
+
+          {/* ================================================
+              CALENDAR
+
+              For admin order notifications:
+
+              1. Prefer the CURRENT fulfillment date/time.
+              2. If the order has no fulfillment date,
+                 fall back to order creation time.
+
+              This means when the customer changes the
+              fulfillment date, opening Add to Calendar from
+              the new notification starts with that new date.
+          ================================================= */}
+
+          {isAdminOrderNotification && hasOrder && calendarOrder && (
             <AddToCalendarDialog
               orderId={calendarOrder.id}
               orderNumber={calendarOrder.order_number}
-              orderCreatedAt={calendarOrder.created_at}
+              orderCreatedAt={
+                calendarOrder.preferred_fulfillment_at ??
+                calendarOrder.created_at
+              }
             />
           )}
         </View>
@@ -359,8 +483,16 @@ export default function NotificationsScreen() {
     );
   };
 
+  /* =========================================================
+     UI
+  ========================================================= */
+
   return (
     <SafeAreaView style={styles.container} edges={["bottom"]}>
+      {/* ===================================================
+          HEADER
+      =================================================== */}
+
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <Text style={styles.headerTitle}>Notifications</Text>
@@ -371,7 +503,9 @@ export default function NotificationsScreen() {
               disabled={markingAllRead}
               style={({ pressed }) => [
                 styles.markAllButton,
+
                 pressed && styles.pressed,
+
                 markingAllRead && styles.disabledButton,
               ]}
             >
@@ -391,9 +525,14 @@ export default function NotificationsScreen() {
         )}
       </View>
 
+      {/* ===================================================
+          CONTENT
+      =================================================== */}
+
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#8B6B35" />
+
           <Text style={styles.loadingText}>Loading notifications...</Text>
         </View>
       ) : notifications.length === 0 ? (
@@ -426,6 +565,10 @@ export default function NotificationsScreen() {
   );
 }
 
+/* =========================================================
+   STYLES
+========================================================= */
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -452,6 +595,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#8B6B35",
   },
+
   headerTopRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -474,6 +618,7 @@ const styles = StyleSheet.create({
   disabledButton: {
     opacity: 0.5,
   },
+
   list: {
     padding: 16,
     paddingBottom: 30,
@@ -556,6 +701,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#8B6B35",
   },
+
   calendarButton: {
     flexDirection: "row",
     alignItems: "center",

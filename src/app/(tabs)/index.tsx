@@ -17,7 +17,7 @@ import { WebView } from "react-native-webview";
 import { useRouter } from "expo-router";
 
 import { supabase } from "@/lib/supabase";
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
 
 /* =========================================================
    TYPES
@@ -223,7 +223,7 @@ function YouTubeHero({ url }: { url: string }) {
       <WebView
         source={{
           html,
-          baseUrl: "https://com.anupama1.mobileshop",
+          baseUrl: "https://com.ahome.arunaskitchen",
         }}
         style={styles.heroMedia}
         javaScriptEnabled
@@ -901,7 +901,7 @@ export default function HomeScreen() {
                       uri: media.url,
                     }}
                     style={styles.heroMedia}
-                    contentFit="cover"
+                    contentFit="contain"
                   />
                 )}
               </View>
@@ -1113,7 +1113,7 @@ export default function HomeScreen() {
 
                           {!settings?.catalog_mode ? (
                             <Text style={styles.productPrice}>
-                              CHF {Number(price).toFixed(2)}
+                              {CURRENCY_SYMBOL} {Number(price).toFixed(2)}
                             </Text>
                           ) : null}
                         </Pressable>

@@ -18,7 +18,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 export type ProductDisplaySettings = {
@@ -1059,7 +1059,7 @@ export default function ProductForm({
 
           <Section title="Pricing & Inventory">
             <Field
-              label="Price (CHF)"
+              label={`Price (${CURRENCY_SYMBOL})`}
               value={price}
               onChangeText={setPrice}
               placeholder="0.00"
@@ -1067,7 +1067,7 @@ export default function ProductForm({
             />
 
             <Field
-              label="Sale Price (CHF)"
+              label={`Sale Price (${CURRENCY_SYMBOL})`}
               value={salePrice}
               onChangeText={setSalePrice}
               placeholder="Optional"

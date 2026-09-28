@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE, STORE_LOCALE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
@@ -112,7 +112,7 @@ export default function OrdersScreen() {
   }
 
   function formatDate(date: string) {
-    return new Date(date).toLocaleDateString("en-CH", {
+    return new Date(date).toLocaleDateString(STORE_LOCALE, {
       year: "numeric",
       month: "long",
       day: "numeric",
@@ -226,7 +226,7 @@ export default function OrdersScreen() {
         <Text style={styles.totalLabel}>Total</Text>
 
         <Text style={styles.total}>
-          CHF {order.total.toFixed(2)}
+          {CURRENCY_SYMBOL} {order.total.toFixed(2)}
         </Text>
       </>
     )}

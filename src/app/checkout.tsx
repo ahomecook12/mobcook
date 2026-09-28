@@ -1,6 +1,7 @@
 import { Image } from "expo-image";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,8 +16,17 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { STORE } from "@/constants/store";
+import { STORE, STORE_LOCALE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
+
+/* =========================================================
+   CONSTANTS
+   ========================================================= */
+
+const CURRENCY_SYMBOL = "₹";
+
+const WEB_API_URL =
+  process.env.EXPO_PUBLIC_WEB_API_URL?.replace(/\/$/, "") ?? "";
 
 /* =========================================================
    TYPES
@@ -54,20 +64,26 @@ type CartItem = {
 };
 
 type StorefrontSettings = {
-  twint_enabled: boolean;
-  twint_phone: string | null;
-
-  bank_transfer_enabled: boolean;
-  bank_account_name: string | null;
-  bank_iban: string | null;
-
   shipping_enabled: boolean;
   shipping_method: string | null;
   shipping_price: number;
   free_shipping: boolean;
 };
 
-type PaymentMethod = "twint" | "bank_transfer" | null;
+type PaymentMethod = {
+  id: string;
+  method_type: string;
+  display_name: string;
+  enabled: boolean;
+  account_name: string | null;
+  phone_number: string | null;
+  payment_url: string | null;
+  instructions: string | null;
+  qr_code_url: string | null;
+  sort_order: number;
+};
+
+type DeliveryMode = "booked" | "requested";
 
 /* =========================================================
    COMPONENT
@@ -79,20 +95,17 @@ export default function CheckoutScreen() {
   const [loading, setLoading] = useState(true);
   const [placingOrder, setPlacingOrder] = useState(false);
 
-  const [profile, setProfile] = useState<Profile | null>(null);
-
   const [items, setItems] = useState<CartItem[]>([]);
-
   const [settings, setSettings] = useState<StorefrontSettings | null>(null);
 
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(null);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+
+  const [paymentMethodId, setPaymentMethodId] = useState("");
 
   const [catalogMode, setCatalogMode] = useState(false);
 
   /* =========================================================
-     Editable checkout address fields
-
-     These come from profiles.
+     SHIPPING ADDRESS
      ========================================================= */
 
   const [fullName, setFullName] = useState("");
@@ -100,7 +113,28 @@ export default function CheckoutScreen() {
   const [address, setAddress] = useState("");
   const [postalCode, setPostalCode] = useState("");
   const [city, setCity] = useState("");
-  const [country, setCountry] = useState("Switzerland");
+  const [country, setCountry] = useState("India");
+
+  /* =========================================================
+     PREFERRED FULFILLMENT
+     ========================================================= */
+
+  const [preferredFulfillmentAt, setPreferredFulfillmentAt] =
+    useState<Date | null>(null);
+
+  const [showFulfillmentDatePicker, setShowFulfillmentDatePicker] =
+    useState(false);
+
+  const [showFulfillmentTimePicker, setShowFulfillmentTimePicker] =
+    useState(false);
+
+  /* =========================================================
+     DELIVERY SERVICE
+     ========================================================= */
+
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("requested");
+
+  const [deliveryDetails, setDeliveryDetails] = useState("");
 
   /* =========================================================
      LOAD CHECKOUT
@@ -116,12 +150,6 @@ export default function CheckoutScreen() {
     try {
       setLoading(true);
 
-      //console.log("🟢 CHECKOUT loadCheckout() STARTED");
-
-      /* -----------------------------------------------------
-         Current user
-         ----------------------------------------------------- */
-
       const {
         data: { user },
         error: userError,
@@ -131,23 +159,22 @@ export default function CheckoutScreen() {
         throw userError;
       }
 
-      //console.log(        "👤 CHECKOUT USER:",        user?.id,        user?.email,      );
-
       if (!user) {
         router.replace("/auth/login");
         return;
       }
 
-      /* -----------------------------------------------------
-         Load profile, cart and storefront settings
-         ----------------------------------------------------- */
-
-      const [profileResult, cartResult, settingsResult, siteSettingsResult] =
-        await Promise.all([
-          supabase
-            .from("profiles")
-            .select(
-              `
+      const [
+        profileResult,
+        cartResult,
+        settingsResult,
+        siteSettingsResult,
+        paymentMethodsResult,
+      ] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select(
+            `
               id,
               full_name,
               phone,
@@ -156,76 +183,79 @@ export default function CheckoutScreen() {
               postal_code,
               country
             `,
-            )
-            .eq("id", user.id)
-            .maybeSingle(),
+          )
+          .eq("id", user.id)
+          .maybeSingle(),
 
-          supabase
-            .from("carts")
-            .select("id")
-            .eq("user_id", user.id)
-            .maybeSingle(),
+        supabase
+          .from("carts")
+          .select("id")
+          .eq("user_id", user.id)
+          .maybeSingle(),
 
-          supabase
-            .from("storefront_settings")
-            .select(
-              `
-              twint_enabled,
-              twint_phone,
-              bank_transfer_enabled,
-              bank_account_name,
-              bank_iban,
+        supabase
+          .from("storefront_settings")
+          .select(
+            `
               shipping_enabled,
               shipping_method,
               shipping_price,
               free_shipping
             `,
-            )
-            .limit(1)
-            .maybeSingle(),
+          )
+          .limit(1)
+          .maybeSingle(),
 
-          supabase
-            .from("site_settings")
-            .select("catalog_mode")
-            .eq("id", true)
-            .maybeSingle(),
-        ]);
+        supabase
+          .from("site_settings")
+          .select("catalog_mode")
+          .eq("id", true)
+          .maybeSingle(),
 
-      /* -----------------------------------------------------
-         Profile
-         ----------------------------------------------------- */
+        supabase
+          .from("payment_methods")
+          .select(
+            `
+              id,
+              method_type,
+              display_name,
+              enabled,
+              account_name,
+              phone_number,
+              payment_url,
+              instructions,
+              qr_code_url,
+              sort_order
+            `,
+          )
+          .eq("enabled", true)
+          .order("sort_order", {
+            ascending: true,
+          }),
+      ]);
+
+      /* =====================================================
+         PROFILE
+         ===================================================== */
 
       if (profileResult.error) {
-        console.error("❌ PROFILE QUERY ERROR:", profileResult.error);
-
         throw profileResult.error;
       }
 
-      const loadedProfile = profileResult.data as Profile | null;
+      const profile = profileResult.data as Profile | null;
 
-      //console.log(        "✅ CHECKOUT PROFILE:",        loadedProfile,      );
+      setFullName(profile?.full_name ?? "");
+      setPhone(profile?.phone ?? "");
+      setAddress(profile?.address ?? "");
+      setPostalCode(profile?.postal_code ?? "");
 
-      setProfile(loadedProfile);
+      setCity(profile?.city?.trim() ? profile.city : "Bangalore");
 
-      /* -----------------------------------------------------
-         Populate editable checkout fields from profile
-         ----------------------------------------------------- */
+      setCountry(profile?.country?.trim() ? profile.country : "India");
 
-      setFullName(loadedProfile?.full_name ?? "");
-
-      setPhone(loadedProfile?.phone ?? "");
-
-      setAddress(loadedProfile?.address ?? "");
-
-      setPostalCode(loadedProfile?.postal_code ?? "");
-
-      setCity(loadedProfile?.city ?? "");
-
-      setCountry(loadedProfile?.country || "Switzerland");
-
-      /* -----------------------------------------------------
-         Storefront settings
-         ----------------------------------------------------- */
+      /* =====================================================
+         STOREFRONT SETTINGS
+         ===================================================== */
 
       if (settingsResult.error) {
         throw settingsResult.error;
@@ -236,38 +266,53 @@ export default function CheckoutScreen() {
           ...settingsResult.data,
           shipping_price: Number(settingsResult.data.shipping_price ?? 0),
         } as StorefrontSettings);
-
-        /* ---------------------------------------------------
-           Automatically select first available payment
-           --------------------------------------------------- */
-
-        if (settingsResult.data.twint_enabled) {
-          setPaymentMethod("twint");
-        } else if (settingsResult.data.bank_transfer_enabled) {
-          setPaymentMethod("bank_transfer");
-        } else {
-          setPaymentMethod(null);
-        }
       } else {
         setSettings(null);
-        setPaymentMethod(null);
       }
+
+      /* =====================================================
+         CATALOG MODE
+         ===================================================== */
+
       if (siteSettingsResult.error) {
         throw siteSettingsResult.error;
       }
 
       setCatalogMode(Boolean(siteSettingsResult.data?.catalog_mode));
-      /* -----------------------------------------------------
-         Cart
-         ----------------------------------------------------- */
+
+      /* =====================================================
+         PAYMENT METHODS
+         ===================================================== */
+
+      if (paymentMethodsResult.error) {
+        throw paymentMethodsResult.error;
+      }
+
+      const loadedPaymentMethods = (paymentMethodsResult.data ??
+        []) as PaymentMethod[];
+
+      setPaymentMethods(loadedPaymentMethods);
+
+      setPaymentMethodId((current) => {
+        if (
+          current &&
+          loadedPaymentMethods.some((method) => method.id === current)
+        ) {
+          return current;
+        }
+
+        return "";
+      });
+
+      /* =====================================================
+         CART
+         ===================================================== */
 
       if (cartResult.error) {
         throw cartResult.error;
       }
 
       if (!cartResult.data) {
-        //console.log(          "🛒 CHECKOUT: No cart found",        );
-
         setItems([]);
         return;
       }
@@ -317,6 +362,7 @@ export default function CheckoutScreen() {
           {
             id: item.id,
             quantity: item.quantity,
+
             product: {
               ...actualProduct,
 
@@ -357,26 +403,18 @@ export default function CheckoutScreen() {
         ];
       });
 
-      //console.log(        "✅ CHECKOUT CART ITEMS:",        formattedItems.length,      );
-
       setItems(formattedItems);
     } catch (error) {
-      console.error("❌ Checkout loading error:", error);
+      console.error("Checkout loading error:", error);
 
       Alert.alert("Unable to load checkout", "Please try again.");
     } finally {
       setLoading(false);
-
-      //console.log(        "🔵 CHECKOUT loadCheckout() FINISHED",      );
     }
   }
 
   /* =========================================================
      SAVE PROFILE ADDRESS
-
-     When the user edits their address at checkout,
-     save it back to profiles so the web app and mobile
-     app continue using the same current address.
      ========================================================= */
 
   async function saveCheckoutAddress() {
@@ -393,13 +431,11 @@ export default function CheckoutScreen() {
       const trimmedFullName = fullName.trim();
 
       const trimmedPhone = phone.trim();
-
       const trimmedAddress = address.trim();
 
       const trimmedPostalCode = postalCode.trim();
 
       const trimmedCity = city.trim();
-
       const trimmedCountry = country.trim();
 
       if (
@@ -418,8 +454,6 @@ export default function CheckoutScreen() {
         return false;
       }
 
-      //console.log(        "💾 Saving checkout address to profile...",      );
-
       const { error } = await supabase
         .from("profiles")
         .update({
@@ -433,57 +467,60 @@ export default function CheckoutScreen() {
         .eq("id", user.id);
 
       if (error) {
-        console.error("❌ PROFILE UPDATE ERROR:", error);
-
         throw error;
       }
 
-      //console.log(        "✅ CHECKOUT PROFILE ADDRESS SAVED",      );
-
-      setProfile((current) => ({
-        ...(current ?? {
-          id: user.id,
-          full_name: null,
-          phone: null,
-          address: null,
-          city: null,
-          postal_code: null,
-          country: null,
-        }),
-
-        full_name: trimmedFullName,
-        phone: trimmedPhone,
-        address: trimmedAddress,
-        postal_code: trimmedPostalCode,
-        city: trimmedCity,
-        country: trimmedCountry,
-      }));
-
       return true;
     } catch (error) {
-      console.error("❌ Saving checkout address failed:", error);
+      console.error("Saving checkout address failed:", error);
 
       Alert.alert("Unable to save address", "Please try again.");
 
       return false;
     }
   }
+
+  /* =========================================================
+     PREFERRED FULFILLMENT HELPERS
+     ========================================================= */
+
+  function formatPreferredFulfillment(date: Date) {
+    return date.toLocaleString(STORE_LOCALE, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  }
+
+  function getPreferredFulfillmentValue() {
+    if (!preferredFulfillmentAt) {
+      return null;
+    }
+
+    /*
+     * Same intent as web datetime-local:
+     * send the selected local date/time.
+     */
+    const year = preferredFulfillmentAt.getFullYear();
+
+    const month = String(preferredFulfillmentAt.getMonth() + 1).padStart(
+      2,
+      "0",
+    );
+
+    const day = String(preferredFulfillmentAt.getDate()).padStart(2, "0");
+
+    const hours = String(preferredFulfillmentAt.getHours()).padStart(2, "0");
+
+    const minutes = String(preferredFulfillmentAt.getMinutes()).padStart(
+      2,
+      "0",
+    );
+
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+
   /* =========================================================
      PLACE ORDER
-
-     The Android app sends the authenticated Supabase
-     access token to the deployed web API.
-
-     The server remains responsible for:
-     - product validation
-     - stock validation
-     - pre-booking rules
-     - price calculation
-     - shipping calculation
-     - order creation
-     - order items
-     - cart clearing
-     - notifications
      ========================================================= */
 
   async function placeOrder() {
@@ -493,12 +530,6 @@ export default function CheckoutScreen() {
 
     try {
       setPlacingOrder(true);
-
-      //console.log("🟢 MOBILE PLACE ORDER STARTED");
-
-      /* -----------------------------------------------------
-         Current authenticated user/session
-         ----------------------------------------------------- */
 
       const {
         data: { session },
@@ -519,40 +550,87 @@ export default function CheckoutScreen() {
         return;
       }
 
-      //console.log(        "✅ MOBILE ORDER SESSION FOUND",        session.user.id,      );
-
-      /* -----------------------------------------------------
-         Validate address
-         ----------------------------------------------------- */
+      /* =====================================================
+         ADDRESS VALIDATION
+         ===================================================== */
 
       const trimmedFullName = fullName.trim();
+
       const trimmedPhone = phone.trim();
+
       const trimmedAddress = address.trim();
+
       const trimmedPostalCode = postalCode.trim();
+
       const trimmedCity = city.trim();
+
       const trimmedCountry = country.trim();
 
-      if (
-        !trimmedFullName ||
-        !trimmedPhone ||
-        !trimmedAddress ||
-        !trimmedPostalCode ||
-        !trimmedCity ||
-        !trimmedCountry
-      ) {
+      if (!trimmedFullName) {
+        Alert.alert("Full name required", "Please enter your full name.");
+
+        return;
+      }
+
+      if (!trimmedPhone) {
+        Alert.alert("Phone required", "Please enter your phone number.");
+
+        return;
+      }
+
+      if (!trimmedAddress) {
+        Alert.alert("Address required", "Please enter your address.");
+
+        return;
+      }
+
+      if (!trimmedCity) {
+        Alert.alert("City required", "Please enter your city.");
+
+        return;
+      }
+
+      if (!trimmedPostalCode) {
+        Alert.alert("Postal code required", "Please enter your postal code.");
+
+        return;
+      }
+
+      if (!trimmedCountry) {
+        Alert.alert("Country required", "Please enter your country.");
+
+        return;
+      }
+
+      /* =====================================================
+         DELIVERY VALIDATION
+         ===================================================== */
+
+      if (deliveryMode !== "booked" && deliveryMode !== "requested") {
         Alert.alert(
-          "Missing information",
-          "Please complete all shipping address fields.",
+          "Delivery service required",
+          "Please select how the delivery service should be arranged.",
         );
 
         return;
       }
 
-      /* -----------------------------------------------------
-         Validate payment method
-         ----------------------------------------------------- */
+      const trimmedDeliveryDetails = deliveryDetails.trim();
 
-      if (paymentMethod !== "twint" && paymentMethod !== "bank_transfer") {
+      if (deliveryMode === "booked" && !trimmedDeliveryDetails) {
+        Alert.alert(
+          "Delivery details required",
+          'Please enter the delivery service details, or select "Request admin to book the delivery service".',
+        );
+
+        return;
+      }
+
+      /* =====================================================
+         PAYMENT VALIDATION
+         ===================================================== */
+
+      if (!paymentMethodId) {
         Alert.alert(
           "Payment method required",
           "Please select a payment method.",
@@ -561,12 +639,22 @@ export default function CheckoutScreen() {
         return;
       }
 
-      /* -----------------------------------------------------
-         Save address first
+      const selectedPaymentMethod = paymentMethods.find(
+        (method) => method.id === paymentMethodId,
+      );
 
-         The web shop also keeps the latest checkout address
-         in the user's profile.
-         ----------------------------------------------------- */
+      if (!selectedPaymentMethod) {
+        Alert.alert(
+          "Payment method unavailable",
+          "Please select an available payment method.",
+        );
+
+        return;
+      }
+
+      /* =====================================================
+         SAVE PROFILE
+         ===================================================== */
 
       const saved = await saveCheckoutAddress();
 
@@ -574,30 +662,20 @@ export default function CheckoutScreen() {
         return;
       }
 
-      /* -----------------------------------------------------
-         API URL
-         ----------------------------------------------------- */
+      /* =====================================================
+         API
+         ===================================================== */
 
-      const apiBaseUrl = process.env.EXPO_PUBLIC_WEB_API_URL?.replace(
-        /\/$/,
-        "",
-      );
-
-      if (!apiBaseUrl) {
+      if (!WEB_API_URL) {
         throw new Error("Web API URL is not configured.");
       }
 
-      //console.log(        "🌐 MOBILE ORDER API:",        `${apiBaseUrl}/api/orders`,      );
-
-      /* -----------------------------------------------------
-         Create order through the deployed web API
-         ----------------------------------------------------- */
-
-      const response = await fetch(`${apiBaseUrl}/api/orders`, {
+      const response = await fetch(`${WEB_API_URL}/api/orders`, {
         method: "POST",
 
         headers: {
           "Content-Type": "application/json",
+
           Authorization: `Bearer ${session.access_token}`,
         },
 
@@ -608,26 +686,18 @@ export default function CheckoutScreen() {
           city: trimmedCity,
           postal_code: trimmedPostalCode,
           country: trimmedCountry,
-          payment_method: paymentMethod,
+
+          payment_method: paymentMethodId,
+
+          preferred_fulfillment_at: getPreferredFulfillmentValue(),
+
+          porter_status: deliveryMode,
+
+          porter_details: trimmedDeliveryDetails || null,
         }),
       });
 
-      /* -----------------------------------------------------
-         Read API response
-
-         We read text first so that an unexpected HTML/server
-         response does not cause JSON.parse() to hide the
-         actual problem.
-         ----------------------------------------------------- */
-
       const responseText = await response.text();
-
-      //console.log(        "📦 MOBILE ORDER API STATUS:",        response.status,      );
-
-      //console.log(
-      //  "📦 MOBILE ORDER API RESPONSE:",
-      //  responseText,
-      //);
 
       let result: {
         success?: boolean;
@@ -644,39 +714,23 @@ export default function CheckoutScreen() {
         );
       }
 
-      /* -----------------------------------------------------
-         API error
-         ----------------------------------------------------- */
-
       if (!response.ok) {
         throw new Error(result.error || "Unable to place your order.");
       }
-
-      /* -----------------------------------------------------
-         Verify successful response
-         ----------------------------------------------------- */
 
       if (!result.success || !result.order_id || !result.order_number) {
         throw new Error("The order was not created successfully.");
       }
 
-      //console.log(        "🎉 MOBILE ORDER CREATED:",        result.order_number,      );
-
-      /* -----------------------------------------------------
-         Go to mobile Order Success
-
-         We pass the order number exactly like the web shop
-         does with ?order=...
-         ----------------------------------------------------- */
-
       router.replace({
         pathname: "/order-success",
+
         params: {
           order: result.order_number,
         },
       });
     } catch (error) {
-      console.error("❌ MOBILE PLACE ORDER ERROR:", error);
+      console.error("MOBILE PLACE ORDER ERROR:", error);
 
       Alert.alert(
         "Unable to place order",
@@ -686,10 +740,50 @@ export default function CheckoutScreen() {
       );
     } finally {
       setPlacingOrder(false);
-
-      //console.log(        "🔵 MOBILE PLACE ORDER FINISHED",      );
     }
   }
+
+  /* =========================================================
+     TOTALS
+     ========================================================= */
+
+  const subtotal = useMemo(
+    () =>
+      items.reduce((total, item) => {
+        const price =
+          item.product.sale_price !== null
+            ? item.product.sale_price
+            : item.product.price;
+
+        return total + price * item.quantity;
+      }, 0),
+    [items],
+  );
+
+  const shippingCost = settings?.free_shipping
+    ? 0
+    : Number(settings?.shipping_price ?? 0);
+
+  const total = subtotal + shippingCost;
+
+  const addressComplete =
+    fullName.trim().length > 0 &&
+    phone.trim().length > 0 &&
+    address.trim().length > 0 &&
+    postalCode.trim().length > 0 &&
+    city.trim().length > 0 &&
+    country.trim().length > 0;
+
+  const deliveryComplete =
+    deliveryMode === "requested" ||
+    (deliveryMode === "booked" && deliveryDetails.trim().length > 0);
+
+  const canPlaceOrder =
+    addressComplete &&
+    deliveryComplete &&
+    paymentMethodId.length > 0 &&
+    !placingOrder;
+
   /* =========================================================
      EMPTY CART
      ========================================================= */
@@ -732,38 +826,6 @@ export default function CheckoutScreen() {
   }
 
   /* =========================================================
-     TOTALS
-     ========================================================= */
-
-  const subtotal = items.reduce((total, item) => {
-    const price =
-      item.product.sale_price !== null
-        ? item.product.sale_price
-        : item.product.price;
-
-    return total + price * item.quantity;
-  }, 0);
-
-  const shippingCost =
-    settings?.shipping_enabled && !settings.free_shipping
-      ? Number(settings.shipping_price ?? 0)
-      : 0;
-
-  const total = subtotal + shippingCost;
-
-  const hasPaymentMethod = !!(
-    settings?.twint_enabled || settings?.bank_transfer_enabled
-  );
-
-  const addressComplete =
-    fullName.trim().length > 0 &&
-    phone.trim().length > 0 &&
-    address.trim().length > 0 &&
-    postalCode.trim().length > 0 &&
-    city.trim().length > 0 &&
-    country.trim().length > 0;
-
-  /* =========================================================
      RENDER
      ========================================================= */
 
@@ -778,9 +840,9 @@ export default function CheckoutScreen() {
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
         >
-          {/* ===================================================
-            PAGE TITLE
-           =================================================== */}
+          {/* =================================================
+              HEADER
+          ================================================= */}
 
           <View style={styles.headerRow}>
             <Pressable onPress={() => router.back()}>
@@ -792,18 +854,26 @@ export default function CheckoutScreen() {
             <View style={styles.headerSpacer} />
           </View>
 
-          {/* ===================================================
-            SHIPPING ADDRESS
-           =================================================== */}
+          <Text style={styles.pageDescription}>
+            {catalogMode
+              ? "Review your order before placing it. We will contact you with the price details."
+              : "Review your order before placing it."}
+          </Text>
+
+          {/* =================================================
+              1. SHIPPING ADDRESS
+          ================================================= */}
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>1. Shipping address</Text>
 
-            <View style={styles.addressCard}>
-              <Text style={styles.addressHint}>
+            <View style={styles.card}>
+              <Text style={styles.helperText}>
                 Your current delivery details are shown below. You can edit them
                 if needed.
               </Text>
+
+              <Text style={styles.inputLabel}>Full name</Text>
 
               <TextInput
                 value={fullName}
@@ -812,6 +882,8 @@ export default function CheckoutScreen() {
                 placeholderTextColor="#999"
                 style={styles.input}
               />
+
+              <Text style={styles.inputLabel}>Phone</Text>
 
               <TextInput
                 value={phone}
@@ -822,6 +894,8 @@ export default function CheckoutScreen() {
                 style={styles.input}
               />
 
+              <Text style={styles.inputLabel}>Address</Text>
+
               <TextInput
                 value={address}
                 onChangeText={setAddress}
@@ -831,23 +905,33 @@ export default function CheckoutScreen() {
               />
 
               <View style={styles.inputRow}>
-                <TextInput
-                  value={postalCode}
-                  onChangeText={setPostalCode}
-                  placeholder="Postal code"
-                  placeholderTextColor="#999"
-                  keyboardType="number-pad"
-                  style={[styles.input, styles.postalInput]}
-                />
+                <View style={styles.postalContainer}>
+                  <Text style={styles.inputLabel}>Postal code</Text>
 
-                <TextInput
-                  value={city}
-                  onChangeText={setCity}
-                  placeholder="City"
-                  placeholderTextColor="#999"
-                  style={[styles.input, styles.cityInput]}
-                />
+                  <TextInput
+                    value={postalCode}
+                    onChangeText={setPostalCode}
+                    placeholder="Postal code"
+                    placeholderTextColor="#999"
+                    keyboardType="number-pad"
+                    style={styles.input}
+                  />
+                </View>
+
+                <View style={styles.cityContainer}>
+                  <Text style={styles.inputLabel}>City</Text>
+
+                  <TextInput
+                    value={city}
+                    onChangeText={setCity}
+                    placeholder="City"
+                    placeholderTextColor="#999"
+                    style={styles.input}
+                  />
+                </View>
               </View>
+
+              <Text style={styles.inputLabel}>Country</Text>
 
               <TextInput
                 value={country}
@@ -863,142 +947,124 @@ export default function CheckoutScreen() {
             </View>
           </View>
 
-          {/* ===================================================
-            PAYMENT
-           =================================================== */}
+          {/* =================================================
+              2. PREFERRED FULFILLMENT
+          ================================================= */}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>2. Payment method</Text>
+            <Text style={styles.sectionTitle}>2. Preferred fulfillment</Text>
 
-            {!hasPaymentMethod ? (
-              <View style={styles.warningBox}>
-                <Text style={styles.warningText}>
-                  No payment method is currently available.
+            <View style={styles.card}>
+              <Text style={styles.helperText}>
+                Let us know when you would prefer your order to be fulfilled.
+              </Text>
+
+              <Text style={styles.inputLabel}>Preferred date and time</Text>
+
+              <Pressable
+                style={styles.datePickerButton}
+                onPress={() => setShowFulfillmentDatePicker(true)}
+              >
+                <Text
+                  style={
+                    preferredFulfillmentAt
+                      ? styles.datePickerValue
+                      : styles.datePickerPlaceholder
+                  }
+                >
+                  {preferredFulfillmentAt
+                    ? formatPreferredFulfillment(preferredFulfillmentAt)
+                    : "Select date and time"}
                 </Text>
-              </View>
-            ) : (
-              <View style={styles.paymentList}>
-                {settings?.twint_enabled && (
-                  <Pressable
-                    onPress={() => setPaymentMethod("twint")}
-                    style={[
-                      styles.paymentCard,
-                      paymentMethod === "twint" && styles.paymentCardSelected,
-                    ]}
-                  >
-                    <View style={styles.paymentRadio}>
-                      {paymentMethod === "twint" && (
-                        <View style={styles.paymentDot} />
-                      )}
-                    </View>
+              </Pressable>
 
-                    <View style={styles.paymentContent}>
-                      <Text style={styles.paymentTitle}>TWINT</Text>
+              {preferredFulfillmentAt && (
+                <Pressable
+                  onPress={() => setPreferredFulfillmentAt(null)}
+                  style={styles.clearDateButton}
+                >
+                  <Text style={styles.clearDateText}>Clear preferred time</Text>
+                </Pressable>
+              )}
 
-                      <Text style={styles.paymentDescription}>
-                        Pay using TWINT
-                      </Text>
+              {showFulfillmentDatePicker && (
+                <DateTimePicker
+                  value={preferredFulfillmentAt ?? new Date()}
+                  mode="date"
+                  minimumDate={new Date()}
+                  display={Platform.OS === "ios" ? "spinner" : "default"}
+                  onValueChange={(_event, selectedDate) => {
+                    if (!selectedDate) {
+                      setShowFulfillmentDatePicker(false);
+                      return;
+                    }
 
-                      {settings.twint_phone && (
-                        <Text style={styles.paymentInfo}>
-                          {settings.twint_phone}
-                        </Text>
-                      )}
-                    </View>
-                  </Pressable>
-                )}
+                    const current = preferredFulfillmentAt ?? new Date();
 
-                {settings?.bank_transfer_enabled && (
-                  <Pressable
-                    onPress={() => setPaymentMethod("bank_transfer")}
-                    style={[
-                      styles.paymentCard,
-                      paymentMethod === "bank_transfer" &&
-                        styles.paymentCardSelected,
-                    ]}
-                  >
-                    <View style={styles.paymentRadio}>
-                      {paymentMethod === "bank_transfer" && (
-                        <View style={styles.paymentDot} />
-                      )}
-                    </View>
+                    const updated = new Date(
+                      selectedDate.getFullYear(),
+                      selectedDate.getMonth(),
+                      selectedDate.getDate(),
+                      current.getHours(),
+                      current.getMinutes(),
+                      0,
+                      0,
+                    );
 
-                    <View style={styles.paymentContent}>
-                      <Text style={styles.paymentTitle}>Bank transfer</Text>
+                    setPreferredFulfillmentAt(updated);
 
-                      <Text style={styles.paymentDescription}>
-                        Pay by bank transfer
-                      </Text>
+                    setShowFulfillmentDatePicker(false);
 
-                      {settings.bank_account_name && (
-                        <Text style={styles.paymentInfo}>
-                          {settings.bank_account_name}
-                        </Text>
-                      )}
+                    setShowFulfillmentTimePicker(true);
+                  }}
+                />
+              )}
 
-                      {settings.bank_iban && (
-                        <Text style={styles.paymentInfo}>
-                          {settings.bank_iban}
-                        </Text>
-                      )}
-                    </View>
-                  </Pressable>
-                )}
-              </View>
-            )}
+              {showFulfillmentTimePicker && (
+                <DateTimePicker
+                  value={preferredFulfillmentAt ?? new Date()}
+                  mode="time"
+                  display={Platform.OS === "ios" ? "spinner" : "default"}
+                  onValueChange={(_event, selectedTime) => {
+                    setShowFulfillmentTimePicker(false);
+
+                    if (!selectedTime) {
+                      return;
+                    }
+
+                    const current = preferredFulfillmentAt ?? new Date();
+
+                    const updated = new Date(
+                      current.getFullYear(),
+                      current.getMonth(),
+                      current.getDate(),
+                      selectedTime.getHours(),
+                      selectedTime.getMinutes(),
+                      0,
+                      0,
+                    );
+
+                    setPreferredFulfillmentAt(updated);
+                  }}
+                />
+              )}
+
+              <Text style={styles.smallHint}>
+                This is your preferred fulfillment time and is not a guaranteed
+                delivery time.
+              </Text>
+            </View>
           </View>
 
-          {/* ===================================================
-            SHIPPING
-           =================================================== */}
+          {/* =================================================
+              3. YOUR ITEMS
+          ================================================= */}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>3. Shipping</Text>
+            <Text style={styles.sectionTitle}>3. Your items</Text>
 
-            {!settings?.shipping_enabled ? (
-              <View style={styles.infoBox}>
-                <Text style={styles.infoText}>Shipping is not enabled.</Text>
-              </View>
-            ) : settings.free_shipping ? (
-              <View style={styles.shippingCard}>
-                <View>
-                  <Text style={styles.shippingTitle}>
-                    {settings.shipping_method || "Shipping"}
-                  </Text>
-
-                  <Text style={styles.shippingDescription}>Free shipping</Text>
-                </View>
-
-                <Text style={styles.shippingPrice}>FREE</Text>
-              </View>
-            ) : (
-              <View style={styles.shippingCard}>
-                <View>
-                  <Text style={styles.shippingTitle}>
-                    {settings.shipping_method || "Shipping"}
-                  </Text>
-
-                  <Text style={styles.shippingDescription}>Shipping fee</Text>
-                </View>
-
-                {!catalogMode && (
-                  <Text style={styles.shippingPrice}>
-                    CHF {shippingCost.toFixed(2)}
-                  </Text>
-                )}
-              </View>
-            )}
-          </View>
-
-          {/* ===================================================
-            ORDER SUMMARY
-           =================================================== */}
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>4. Order summary</Text>
-
-            <View style={styles.summaryCard}>
-              {items.map((item) => {
+            <View style={styles.card}>
+              {items.map((item, index) => {
                 const price =
                   item.product.sale_price !== null
                     ? item.product.sale_price
@@ -1009,105 +1075,286 @@ export default function CheckoutScreen() {
                 const image = item.product.images?.[0] ?? null;
 
                 return (
-                  <View key={item.id} style={styles.summaryItem}>
-                    <View style={styles.summaryImageContainer}>
-                      {image ? (
-                        <Image
-                          source={{
-                            uri: image,
-                          }}
-                          style={styles.summaryImage}
-                          contentFit="cover"
-                        />
-                      ) : (
-                        <View style={styles.noImage}>
-                          <Text style={styles.noImageText}>—</Text>
-                        </View>
+                  <View key={item.id}>
+                    <View style={styles.summaryItem}>
+                      <View style={styles.summaryImageContainer}>
+                        {image ? (
+                          <Image
+                            source={{
+                              uri: image,
+                            }}
+                            style={styles.summaryImage}
+                            contentFit="cover"
+                          />
+                        ) : (
+                          <View style={styles.noImage}>
+                            <Text style={styles.noImageText}>—</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      <View style={styles.summaryItemInfo}>
+                        <Text style={styles.summaryItemName} numberOfLines={2}>
+                          {item.product.name}
+                        </Text>
+
+                        <Text style={styles.summaryItemQuantity}>
+                          Qty: {item.quantity}
+                        </Text>
+
+                        {!catalogMode && (
+                          <Text style={styles.itemUnitPrice}>
+                            {CURRENCY_SYMBOL} {price.toFixed(2)} ×{" "}
+                            {item.quantity}
+                          </Text>
+                        )}
+                      </View>
+
+                      {!catalogMode && (
+                        <Text style={styles.summaryItemPrice}>
+                          {CURRENCY_SYMBOL} {lineTotal.toFixed(2)}
+                        </Text>
                       )}
                     </View>
 
-                    <View style={styles.summaryItemInfo}>
-                      <Text style={styles.summaryItemName} numberOfLines={2}>
-                        {item.product.name}
-                      </Text>
-
-                      <Text style={styles.summaryItemQuantity}>
-                        Qty: {item.quantity}
-                      </Text>
-                    </View>
-
-                    {!catalogMode && (
-                      <Text style={styles.summaryItemPrice}>
-                        CHF {lineTotal.toFixed(2)}
-                      </Text>
+                    {index < items.length - 1 && (
+                      <View style={styles.itemDivider} />
                     )}
                   </View>
                 );
               })}
+            </View>
+          </View>
 
-              <View style={styles.divider} />
+          {/* =================================================
+              4. DELIVERY SERVICE
+          ================================================= */}
 
-              {!catalogMode && (
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>Subtotal</Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>4. Delivery service</Text>
 
-                  <Text style={styles.totalValue}>
-                    CHF {subtotal.toFixed(2)}
+            <View style={styles.card}>
+              <Text style={styles.helperText}>
+                Choose who should arrange the delivery service.
+              </Text>
+
+              <Pressable
+                onPress={() => setDeliveryMode("booked")}
+                style={[
+                  styles.optionCard,
+                  deliveryMode === "booked" && styles.optionCardSelected,
+                ]}
+              >
+                <View style={styles.radioOuter}>
+                  {deliveryMode === "booked" && (
+                    <View style={styles.radioInner} />
+                  )}
+                </View>
+
+                <View style={styles.optionContent}>
+                  <Text style={styles.optionTitle}>
+                    I will book the delivery service myself
+                  </Text>
+
+                  <Text style={styles.optionDescription}>
+                    Add the delivery company, contact details, or other delivery
+                    information below.
                   </Text>
                 </View>
-              )}
+              </Pressable>
 
-              {!catalogMode && (
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>Shipping</Text>
+              <Pressable
+                onPress={() => setDeliveryMode("requested")}
+                style={[
+                  styles.optionCard,
+                  deliveryMode === "requested" && styles.optionCardSelected,
+                ]}
+              >
+                <View style={styles.radioOuter}>
+                  {deliveryMode === "requested" && (
+                    <View style={styles.radioInner} />
+                  )}
+                </View>
 
-                  <Text style={styles.totalValue}>
-                    {shippingCost === 0
-                      ? "FREE"
-                      : `CHF ${shippingCost.toFixed(2)}`}
+                <View style={styles.optionContent}>
+                  <Text style={styles.optionTitle}>
+                    Request admin to book the delivery service
+                  </Text>
+
+                  <Text style={styles.optionDescription}>
+                    We will arrange the delivery service for you. Extra delivery
+                    charges may apply.
                   </Text>
                 </View>
-              )}
+              </Pressable>
 
-              <View style={styles.divider} />
+              <Text style={[styles.inputLabel, styles.deliveryDetailsLabel]}>
+                Delivery details
+              </Text>
 
-              {!catalogMode && (
-                <View style={styles.grandTotalRow}>
-                  <Text style={styles.grandTotalLabel}>Total</Text>
+              <TextInput
+                value={deliveryDetails}
+                onChangeText={setDeliveryDetails}
+                placeholder="Add the delivery company, contact details, or notes"
+                placeholderTextColor="#999"
+                multiline
+                textAlignVertical="top"
+                style={[styles.input, styles.textArea]}
+              />
 
-                  <Text style={styles.grandTotalValue}>
-                    CHF {total.toFixed(2)}
+              <Text style={styles.smallHint}>
+                {deliveryMode === "requested"
+                  ? "If you ask us to arrange the delivery, you can leave this blank."
+                  : "Please add the delivery service details when arranging delivery yourself."}
+              </Text>
+            </View>
+          </View>
+
+          {/* =================================================
+              5. PAYMENT METHOD
+          ================================================= */}
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>5. Payment method</Text>
+
+            {paymentMethods.length === 0 ? (
+              <View style={styles.warningBox}>
+                <Text style={styles.warningText}>
+                  No payment method is currently available.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.paymentList}>
+                {paymentMethods.map((method) => {
+                  const selected = paymentMethodId === method.id;
+
+                  return (
+                    <Pressable
+                      key={method.id}
+                      onPress={() => setPaymentMethodId(method.id)}
+                      style={[
+                        styles.paymentCard,
+                        selected && styles.paymentCardSelected,
+                      ]}
+                    >
+                      <View style={styles.paymentRadio}>
+                        {selected && <View style={styles.paymentDot} />}
+                      </View>
+
+                      <View style={styles.paymentContent}>
+                        <Text style={styles.paymentTitle}>
+                          {method.display_name}
+                        </Text>
+
+                        {method.account_name && (
+                          <Text style={styles.paymentInfo}>
+                            Account: {method.account_name}
+                          </Text>
+                        )}
+
+                        {method.phone_number && (
+                          <Text style={styles.paymentInfo}>
+                            Phone: {method.phone_number}
+                          </Text>
+                        )}
+
+                        {method.instructions && (
+                          <Text style={styles.paymentInstructions}>
+                            {method.instructions}
+                          </Text>
+                        )}
+
+                        {method.qr_code_url && (
+                          <Image
+                            source={{
+                              uri: method.qr_code_url,
+                            }}
+                            style={styles.paymentQr}
+                            contentFit="contain"
+                          />
+                        )}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+
+          {/* =================================================
+              6. ORDER SUMMARY
+          ================================================= */}
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>6. Order summary</Text>
+
+            <View style={styles.card}>
+              {catalogMode ? (
+                <View style={styles.catalogPriceBox}>
+                  <Text style={styles.catalogPriceTitle}>Price details</Text>
+
+                  <Text style={styles.catalogPriceText}>
+                    We will contact you after your order with the price and
+                    shipping details.
                   </Text>
                 </View>
+              ) : (
+                <>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Subtotal</Text>
+
+                    <Text style={styles.totalValue}>
+                      {CURRENCY_SYMBOL} {subtotal.toFixed(2)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.totalRow}>
+                    <View style={styles.shippingLabelContainer}>
+                      <Text style={styles.totalLabel}>Shipping</Text>
+
+                      <Text style={styles.shippingNote}>
+                        Don't pay this if you book the delivery service
+                        yourself.
+                      </Text>
+                    </View>
+
+                    <Text style={styles.totalValue}>
+                      {shippingCost === 0
+                        ? "Free"
+                        : `${CURRENCY_SYMBOL} ${shippingCost.toFixed(2)}`}
+                    </Text>
+                  </View>
+
+                  <View style={styles.divider} />
+
+                  <View style={styles.grandTotalRow}>
+                    <Text style={styles.grandTotalLabel}>Total</Text>
+
+                    <Text style={styles.grandTotalValue}>
+                      {CURRENCY_SYMBOL} {total.toFixed(2)}
+                    </Text>
+                  </View>
+                </>
               )}
             </View>
           </View>
 
-          {catalogMode && (
-            <View style={styles.catalogNote}>
-              <Text style={styles.catalogNoteText}>
-                This shop is currently in catalog mode. Prices will be confirmed
-                by the shop after your order is received.
-              </Text>
-            </View>
-          )}
-
-          {/* ===================================================
-            PLACE ORDER
-           =================================================== */}
+          {/* =================================================
+              PLACE ORDER
+          ================================================= */}
 
           <Pressable
             style={[
               styles.placeOrderButton,
-              (!hasPaymentMethod || !addressComplete || placingOrder) &&
-                styles.placeOrderDisabled,
+              !canPlaceOrder && styles.placeOrderDisabled,
             ]}
-            disabled={!hasPaymentMethod || !addressComplete || placingOrder}
+            disabled={!canPlaceOrder}
             onPress={placeOrder}
           >
             {placingOrder ? (
               <View style={styles.placeOrderLoading}>
                 <ActivityIndicator size="small" color="#fff" />
+
                 <Text style={styles.placeOrderText}>Placing order...</Text>
               </View>
             ) : (
@@ -1116,14 +1363,25 @@ export default function CheckoutScreen() {
           </Pressable>
 
           {!addressComplete && (
-            <Text style={styles.addressRequiredNote}>
+            <Text style={styles.requiredNote}>
               Please complete your shipping address before placing the order.
             </Text>
           )}
 
+          {addressComplete && !deliveryComplete && (
+            <Text style={styles.requiredNote}>
+              Please complete the delivery service details.
+            </Text>
+          )}
+
+          {addressComplete && deliveryComplete && !paymentMethodId && (
+            <Text style={styles.requiredNote}>
+              Please select a payment method.
+            </Text>
+          )}
+
           <Text style={styles.secureNote}>
-            Your order will be securely processed through your selected payment
-            method.
+            Your order will be processed using the details selected above.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -1165,7 +1423,7 @@ const styles = StyleSheet.create({
   },
 
   /* =======================================================
-     Header
+     HEADER
      ======================================================= */
 
   headerRow: {
@@ -1173,7 +1431,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
   },
 
   backText: {
@@ -1192,12 +1449,20 @@ const styles = StyleSheet.create({
     width: 45,
   },
 
+  pageDescription: {
+    marginTop: 6,
+    marginBottom: 4,
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#777",
+  },
+
   /* =======================================================
-     Sections
+     SECTIONS
      ======================================================= */
 
   section: {
-    marginTop: 20,
+    marginTop: 22,
   },
 
   sectionTitle: {
@@ -1207,11 +1472,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  /* =======================================================
-     Address
-     ======================================================= */
-
-  addressCard: {
+  card: {
     borderWidth: 1,
     borderColor: "#ddd8cf",
     borderRadius: 14,
@@ -1219,11 +1480,29 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.45)",
   },
 
-  addressHint: {
+  helperText: {
     fontSize: 12,
     lineHeight: 18,
     color: "#777",
-    marginBottom: 12,
+    marginBottom: 14,
+  },
+
+  smallHint: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 16,
+    color: "#888",
+  },
+
+  /* =======================================================
+     INPUTS
+     ======================================================= */
+
+  inputLabel: {
+    marginBottom: 6,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#444",
   },
 
   input: {
@@ -1235,7 +1514,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#222",
     backgroundColor: "rgba(255,255,255,0.65)",
-    marginBottom: 10,
+    marginBottom: 12,
   },
 
   inputRow: {
@@ -1243,12 +1522,17 @@ const styles = StyleSheet.create({
     gap: 10,
   },
 
-  postalInput: {
+  postalContainer: {
     flex: 0.38,
   },
 
-  cityInput: {
+  cityContainer: {
     flex: 0.62,
+  },
+
+  textArea: {
+    minHeight: 105,
+    paddingTop: 12,
   },
 
   profileNote: {
@@ -1259,7 +1543,186 @@ const styles = StyleSheet.create({
   },
 
   /* =======================================================
-     Payment
+     DATE
+     ======================================================= */
+
+  datePickerButton: {
+    minHeight: 46,
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#d8d4cc",
+    borderRadius: 10,
+    paddingHorizontal: 13,
+    backgroundColor: "rgba(255,255,255,0.65)",
+  },
+
+  datePickerPlaceholder: {
+    fontSize: 14,
+    color: "#999",
+  },
+
+  datePickerValue: {
+    fontSize: 14,
+    color: "#222",
+  },
+
+  clearDateButton: {
+    alignSelf: "flex-start",
+    marginTop: 9,
+    marginBottom: 3,
+  },
+
+  clearDateText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#8c672d",
+  },
+
+  doneDateButton: {
+    alignSelf: "flex-end",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+
+  doneDateText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#8c672d",
+  },
+
+  /* =======================================================
+     ITEMS
+     ======================================================= */
+
+  summaryItem: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  itemDivider: {
+    height: 1,
+    backgroundColor: "#e4e0d9",
+    marginVertical: 13,
+  },
+
+  summaryImageContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 9,
+    overflow: "hidden",
+    backgroundColor: "#eee",
+  },
+
+  summaryImage: {
+    width: "100%",
+    height: "100%",
+  },
+
+  noImage: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  noImageText: {
+    color: "#999",
+  },
+
+  summaryItemInfo: {
+    flex: 1,
+    marginLeft: 11,
+    minWidth: 0,
+  },
+
+  summaryItemName: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+    color: "#222",
+  },
+
+  summaryItemQuantity: {
+    marginTop: 3,
+    fontSize: 11,
+    color: "#777",
+  },
+
+  itemUnitPrice: {
+    marginTop: 3,
+    fontSize: 11,
+    color: "#777",
+  },
+
+  summaryItemPrice: {
+    marginLeft: 8,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#222",
+  },
+
+  /* =======================================================
+     DELIVERY
+     ======================================================= */
+
+  optionCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    borderWidth: 1,
+    borderColor: "#ddd8cf",
+    borderRadius: 12,
+    padding: 13,
+    marginBottom: 10,
+    backgroundColor: "rgba(255,255,255,0.4)",
+  },
+
+  optionCardSelected: {
+    borderColor: "#bd9650",
+    backgroundColor: "rgba(255,255,255,0.75)",
+  },
+
+  radioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: "#aaa",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 11,
+    marginTop: 1,
+  },
+
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#bd9650",
+  },
+
+  optionContent: {
+    flex: 1,
+  },
+
+  optionTitle: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "700",
+    color: "#222",
+  },
+
+  optionDescription: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+    color: "#777",
+  },
+
+  deliveryDetailsLabel: {
+    marginTop: 8,
+  },
+
+  /* =======================================================
+     PAYMENT
      ======================================================= */
 
   paymentList: {
@@ -1310,129 +1773,69 @@ const styles = StyleSheet.create({
     color: "#222",
   },
 
-  paymentDescription: {
-    marginTop: 3,
-    fontSize: 12,
-    color: "#777",
-  },
-
   paymentInfo: {
     marginTop: 5,
     fontSize: 12,
+    lineHeight: 17,
     color: "#555",
   },
 
-  /* =======================================================
-     Shipping
-     ======================================================= */
-
-  shippingCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: "#ddd8cf",
-    borderRadius: 14,
-    padding: 14,
-    backgroundColor: "rgba(255,255,255,0.45)",
-  },
-
-  shippingTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#222",
-  },
-
-  shippingDescription: {
-    marginTop: 3,
+  paymentInstructions: {
+    marginTop: 7,
     fontSize: 12,
+    lineHeight: 18,
     color: "#777",
   },
 
-  shippingPrice: {
+  paymentQr: {
+    width: 180,
+    height: 180,
+    marginTop: 12,
+    alignSelf: "center",
+  },
+
+  warningBox: {
+    borderWidth: 1,
+    borderColor: "#e3c7c4",
+    borderRadius: 12,
+    padding: 13,
+    backgroundColor: "#fff6f5",
+  },
+
+  warningText: {
+    fontSize: 13,
+    color: "#9b3028",
+  },
+
+  /* =======================================================
+     TOTALS
+     ======================================================= */
+
+  catalogPriceBox: {
+    borderRadius: 10,
+    padding: 12,
+    backgroundColor: "rgba(0,0,0,0.035)",
+  },
+
+  catalogPriceTitle: {
     fontSize: 14,
     fontWeight: "700",
-    color: "#222",
+    color: "#333",
   },
 
-  /* =======================================================
-     Summary
-     ======================================================= */
-
-  summaryCard: {
-    borderWidth: 1,
-    borderColor: "#ddd8cf",
-    borderRadius: 14,
-    padding: 14,
-    backgroundColor: "rgba(255,255,255,0.45)",
-  },
-
-  summaryItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 13,
-  },
-
-  summaryImageContainer: {
-    width: 58,
-    height: 58,
-    borderRadius: 9,
-    overflow: "hidden",
-    backgroundColor: "#eee",
-  },
-
-  summaryImage: {
-    width: "100%",
-    height: "100%",
-  },
-
-  noImage: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  noImageText: {
-    color: "#999",
-  },
-
-  summaryItemInfo: {
-    flex: 1,
-    marginLeft: 10,
-    minWidth: 0,
-  },
-
-  summaryItemName: {
-    fontSize: 13,
+  catalogPriceText: {
+    marginTop: 5,
+    fontSize: 12,
     lineHeight: 18,
-    fontWeight: "600",
-    color: "#222",
-  },
-
-  summaryItemQuantity: {
-    marginTop: 3,
-    fontSize: 11,
     color: "#777",
-  },
-
-  summaryItemPrice: {
-    marginLeft: 8,
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#222",
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: "#e4e0d9",
-    marginVertical: 8,
   },
 
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 5,
+    alignItems: "flex-start",
+    paddingVertical: 7,
+    gap: 15,
   },
 
   totalLabel: {
@@ -1444,6 +1847,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: "#333",
+  },
+
+  shippingLabelContainer: {
+    flex: 1,
+  },
+
+  shippingNote: {
+    marginTop: 3,
+    fontSize: 10,
+    lineHeight: 14,
+    color: "#888",
+  },
+
+  divider: {
+    height: 1,
+    backgroundColor: "#e4e0d9",
+    marginVertical: 8,
   },
 
   grandTotalRow: {
@@ -1466,51 +1886,7 @@ const styles = StyleSheet.create({
   },
 
   /* =======================================================
-     Messages
-     ======================================================= */
-  catalogNote: {
-    marginTop: 20,
-    padding: 13,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#ddd8cf",
-    backgroundColor: "rgba(255,255,255,0.45)",
-  },
-
-  catalogNoteText: {
-    fontSize: 12,
-    lineHeight: 18,
-    textAlign: "center",
-    color: "#777",
-  },
-  warningBox: {
-    borderWidth: 1,
-    borderColor: "#e3c7c4",
-    borderRadius: 12,
-    padding: 13,
-    backgroundColor: "#fff6f5",
-  },
-
-  warningText: {
-    fontSize: 13,
-    color: "#9b3028",
-  },
-
-  infoBox: {
-    borderWidth: 1,
-    borderColor: "#ddd8cf",
-    borderRadius: 12,
-    padding: 13,
-    backgroundColor: "rgba(255,255,255,0.45)",
-  },
-
-  infoText: {
-    fontSize: 13,
-    color: "#777",
-  },
-
-  /* =======================================================
-     Place order
+     PLACE ORDER
      ======================================================= */
 
   placeOrderButton: {
@@ -1525,13 +1901,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#aaa",
   },
 
+  placeOrderLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
   placeOrderText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",
   },
 
-  addressRequiredNote: {
+  requiredNote: {
     marginTop: 8,
     textAlign: "center",
     fontSize: 11,
@@ -1545,13 +1927,9 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     color: "#888",
   },
-  placeOrderLoading: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
+
   /* =======================================================
-     Empty
+     EMPTY
      ======================================================= */
 
   emptyContainer: {

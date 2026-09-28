@@ -501,7 +501,7 @@ export default function SiteHeader() {
 
         <Pressable onPress={() => goTo("/")} style={styles.logoContainer}>
           <Image
-            source={require("@/assets/images/lcc.svg")}
+            source={require("@/assets/images/ak.svg")}
             style={styles.logo}
             contentFit="contain"
           />

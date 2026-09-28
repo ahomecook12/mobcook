@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE, STORE_LOCALE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
@@ -151,7 +151,7 @@ export default function AdminOrdersPage() {
   }
 
   function formatDate(dateString: string) {
-    return new Date(dateString).toLocaleDateString("en-CH", {
+    return new Date(dateString).toLocaleDateString(STORE_LOCALE, {
       year: "numeric",
       month: "long",
       day: "numeric",
@@ -163,7 +163,7 @@ export default function AdminOrdersPage() {
   }
 
   function formatTotal(total: number | string) {
-    return `CHF ${Number(total).toFixed(2)}`;
+    return `${CURRENCY_SYMBOL} ${Number(total).toFixed(2)}`;
   }
 
   // ---------------------------------------------------------

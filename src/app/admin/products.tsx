@@ -12,7 +12,7 @@ import {
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 type Product = {
@@ -232,12 +232,12 @@ export default function AdminProductsPage() {
                     <View style={styles.detailsRow}>
                       <View style={styles.priceContainer}>
                         <Text style={styles.price}>
-                          CHF {Number(displayPrice).toFixed(2)}
+                          {CURRENCY_SYMBOL} {Number(displayPrice).toFixed(2)}
                         </Text>
 
                         {hasSale ? (
                           <Text style={styles.originalPrice}>
-                            CHF {Number(product.price).toFixed(2)}
+                            {CURRENCY_SYMBOL} {Number(product.price).toFixed(2)}
                           </Text>
                         ) : null}
                       </View>

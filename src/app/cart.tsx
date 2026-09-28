@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { notifyCartChanged, supabase } from "@/lib/supabase";
-import { STORE } from "@/constants/store";
+import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
 
 type CartProduct = {
   id: string;
@@ -450,12 +450,12 @@ export default function CartScreen() {
                   {!catalogMode && (
                     <View style={styles.priceRow}>
                       <Text style={styles.unitPrice}>
-                        CHF {unitPrice.toFixed(2)}
+                        {CURRENCY_SYMBOL} {unitPrice.toFixed(2)}
                       </Text>
 
                       {product.sale_price !== null && (
                         <Text style={styles.originalPrice}>
-                          CHF {product.price.toFixed(2)}
+                          {CURRENCY_SYMBOL} {product.price.toFixed(2)}
                         </Text>
                       )}
                     </View>
@@ -508,7 +508,7 @@ export default function CartScreen() {
 
                     {!catalogMode && (
                       <Text style={styles.lineTotal}>
-                        CHF {lineTotal.toFixed(2)}
+                        {CURRENCY_SYMBOL} {lineTotal.toFixed(2)}
                       </Text>
                     )}
                   </View>
@@ -543,7 +543,7 @@ export default function CartScreen() {
                 </Text>
 
                 <Text style={styles.summaryValue}>
-                  CHF {subtotal.toFixed(2)}
+                  {CURRENCY_SYMBOL} {subtotal.toFixed(2)}
                 </Text>
               </View>
 
