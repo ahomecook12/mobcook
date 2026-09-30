@@ -18,6 +18,14 @@ import {
   STORE,
 } from "@/constants/store";
 import { notifyCartChanged, supabase } from "@/lib/supabase";
+import { CACHE_KEYS, getCachedData, setCachedData } from "@/lib/cache";
+
+type ProductDetailCache = {
+  product: Product;
+  categories: Category[];
+  catalogMode: boolean;
+  cloudinaryImagesEnabled: boolean;
+};
 
 type DisplaySettings = {
   price?: boolean;
@@ -84,6 +92,20 @@ export default function ProductDetailScreen() {
       setLoading(true);
       setError(null);
 
+      const productCacheKey = `${CACHE_KEYS.productDetail}:${id}`;
+
+      const cached = await getCachedData<ProductDetailCache>(productCacheKey);
+
+      if (cached) {
+        setProduct(cached.product);
+        setCategories(cached.categories);
+        setCatalogMode(cached.catalogMode);
+        setCloudinaryImagesEnabled(cached.cloudinaryImagesEnabled);
+        setSelectedImage(0);
+
+        return;
+      }
+
       const [
         { data: productData, error: productError },
         { data: siteSettings, error: siteSettingsError },
@@ -129,11 +151,14 @@ export default function ProductDetailScreen() {
         throw siteSettingsError;
       }
 
-      setCatalogMode(siteSettings?.catalog_mode === true);
-      setCloudinaryImagesEnabled(
-        siteSettings?.cloudinary_images_enabled ?? true,
-      );
+      const loadedCatalogMode = siteSettings?.catalog_mode === true;
 
+      const loadedCloudinaryImagesEnabled =
+        siteSettings?.cloudinary_images_enabled ?? true;
+
+      setCatalogMode(loadedCatalogMode);
+
+      setCloudinaryImagesEnabled(loadedCloudinaryImagesEnabled);
       if (!productData) {
         setError("Product not found.");
         return;
@@ -199,6 +224,13 @@ export default function ProductDetailScreen() {
       });
 
       setCategories(formattedCategories);
+
+      await setCachedData<ProductDetailCache>(productCacheKey, {
+        product: formattedProduct,
+        categories: formattedCategories,
+        catalogMode: loadedCatalogMode,
+        cloudinaryImagesEnabled: loadedCloudinaryImagesEnabled,
+      });
     } catch (err) {
       console.error("Product loading error:", err);
       setError("Unable to load this product.");

@@ -5,11 +5,12 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Alert,
   Text,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
+import { clearAppCache } from "@/lib/cache";
 import { STORE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
@@ -62,7 +63,21 @@ export default function AdminDashboard() {
       setLoading(false);
     }
   }
+  async function handleClearCache() {
+    try {
+      await clearAppCache();
 
+      Alert.alert(
+        "Cache cleared",
+        "The app cache has been cleared successfully.",
+      );
+    } catch {
+      Alert.alert(
+        "Unable to clear cache",
+        "The app cache could not be cleared. Please try again.",
+      );
+    }
+  }
   if (loading) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
@@ -210,6 +225,29 @@ export default function AdminDashboard() {
             <Text style={styles.cardDescription}>
               Manage your homepage hero, product sections, social links and
               other storefront settings.
+            </Text>
+          </View>
+
+          <Text style={styles.arrow}>›</Text>
+        </Pressable>
+
+        {/* ================================================= */}
+        {/* APP CACHE */}
+        {/* ================================================= */}
+
+        <Text style={styles.sectionTitle}>App maintenance</Text>
+
+        <Pressable style={styles.mainCard} onPress={handleClearCache}>
+          <View style={styles.cardIcon}>
+            <Text style={styles.cardIconText}>♻️</Text>
+          </View>
+
+          <View style={styles.cardContent}>
+            <Text style={styles.cardTitle}>Clear app cache</Text>
+
+            <Text style={styles.cardDescription}>
+              Clear cached storefront data so the app loads the latest shop
+              information.
             </Text>
           </View>
 

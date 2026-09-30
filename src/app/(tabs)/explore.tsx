@@ -4,6 +4,7 @@ import {
   STORE,
 } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
+import { CACHE_KEYS, getCachedData, setCachedData } from "@/lib/cache";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
@@ -36,7 +37,12 @@ type Category = {
   name: string;
   slug: string;
 };
-
+type ExploreCache = {
+  products: Product[];
+  categories: Category[];
+  catalogMode: boolean;
+  cloudinaryImagesEnabled: boolean;
+};
 type SortOption = "newest" | "most-expensive" | "least-expensive" | "oldest";
 
 export default function ProductsScreen() {
@@ -66,6 +72,17 @@ export default function ProductsScreen() {
     try {
       setLoading(true);
       setError(null);
+
+      const cached = await getCachedData<ExploreCache>(CACHE_KEYS.explore);
+
+      if (cached) {
+        setProducts(cached.products);
+        setCategories(cached.categories);
+        setCatalogMode(cached.catalogMode);
+        setCloudinaryImagesEnabled(cached.cloudinaryImagesEnabled);
+
+        return;
+      }
 
       const [
         { data: productData, error: productsError },
@@ -142,12 +159,22 @@ export default function ProductsScreen() {
 
       const loadedCategories = categoryData ?? [];
 
+      const loadedCatalogMode = siteSettings?.catalog_mode === true;
+
+      const loadedCloudinaryImagesEnabled =
+        siteSettings?.cloudinary_images_enabled ?? true;
+
       setProducts(formattedProducts);
       setCategories(loadedCategories);
-      setCatalogMode(siteSettings?.catalog_mode === true);
-      setCloudinaryImagesEnabled(
-        siteSettings?.cloudinary_images_enabled ?? true,
-      );
+      setCatalogMode(loadedCatalogMode);
+      setCloudinaryImagesEnabled(loadedCloudinaryImagesEnabled);
+
+      await setCachedData<ExploreCache>(CACHE_KEYS.explore, {
+        products: formattedProducts,
+        categories: loadedCategories,
+        catalogMode: loadedCatalogMode,
+        cloudinaryImagesEnabled: loadedCloudinaryImagesEnabled,
+      });
     } catch (err) {
       console.error("Products loading error:", err);
       setError("Unable to load products.");

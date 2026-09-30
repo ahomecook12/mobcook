@@ -9,13 +9,19 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { STORE } from "@/constants/store";
+import { CLOUDINARY_FALLBACK_IMAGE, STORE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
+import { CACHE_KEYS, getCachedData, setCachedData } from "@/lib/cache";
+
+type ReviewsCache = {
+  images: string[];
+  cloudinaryImagesEnabled: boolean;
+};
 
 export default function ReviewsScreen() {
   const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] = useState(true);
   useEffect(() => {
     loadReviews();
   }, []);
@@ -24,9 +30,18 @@ export default function ReviewsScreen() {
     try {
       setLoading(true);
 
+      const cached = await getCachedData<ReviewsCache>(CACHE_KEYS.reviews);
+
+      if (cached) {
+        setImages(cached.images);
+        setCloudinaryImagesEnabled(cached.cloudinaryImagesEnabled);
+
+        return;
+      }
+
       const { data, error } = await supabase
         .from("site_settings")
-        .select("customer_review_images")
+        .select("customer_review_images, cloudinary_images_enabled")
         .eq("id", true)
         .maybeSingle();
 
@@ -34,9 +49,27 @@ export default function ReviewsScreen() {
         throw error;
       }
 
-      setImages(data?.customer_review_images ?? []);
+      const loadedImages: string[] = Array.isArray(data?.customer_review_images)
+        ? data.customer_review_images.filter(
+            (image): image is string =>
+              typeof image === "string" && image.trim().length > 0,
+          )
+        : [];
+
+      const loadedCloudinaryImagesEnabled =
+        data?.cloudinary_images_enabled ?? true;
+
+      setImages(loadedImages);
+
+      setCloudinaryImagesEnabled(loadedCloudinaryImagesEnabled);
+
+      await setCachedData<ReviewsCache>(CACHE_KEYS.reviews, {
+        images: loadedImages,
+        cloudinaryImagesEnabled: loadedCloudinaryImagesEnabled,
+      });
     } catch (error) {
       console.error("Load customer reviews error:", error);
+
       setImages([]);
     } finally {
       setLoading(false);
@@ -47,14 +80,9 @@ export default function ReviewsScreen() {
     return (
       <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
         <View style={styles.center}>
-          <ActivityIndicator
-            size="large"
-            color={STORE.colors.primary}
-          />
+          <ActivityIndicator size="large" color={STORE.colors.primary} />
 
-          <Text style={styles.loadingText}>
-            Loading customer reviews...
-          </Text>
+          <Text style={styles.loadingText}>Loading customer reviews...</Text>
         </View>
       </SafeAreaView>
     );
@@ -69,13 +97,9 @@ export default function ReviewsScreen() {
         {/* HEADER */}
 
         <View style={styles.header}>
-          <Text style={styles.eyebrow}>
-            FROM OUR CUSTOMERS
-          </Text>
+          <Text style={styles.eyebrow}>FROM OUR CUSTOMERS</Text>
 
-          <Text style={styles.title}>
-            Customer reviews
-          </Text>
+          <Text style={styles.title}>Customer reviews</Text>
 
           <Text style={styles.description}>
             See what our customers have shared with us.
@@ -86,30 +110,35 @@ export default function ReviewsScreen() {
 
         {images.length > 0 ? (
           <View style={styles.gallery}>
-            {images.map((image, index) => (
-              <View
-                key={`${image}-${index}`}
-                style={styles.imageCard}
-              >
-                <Image
-                  source={{ uri: image }}
-                  contentFit="contain"
-                  style={styles.reviewImage}
-                />
-              </View>
-            ))}
+            {images.map((image, index) => {
+              const isCloudinaryImage = image
+                .toLowerCase()
+                .includes("res.cloudinary.com");
+
+              const imageSource =
+                isCloudinaryImage && !cloudinaryImagesEnabled
+                  ? CLOUDINARY_FALLBACK_IMAGE
+                  : { uri: image };
+
+              return (
+                <View key={`${image}-${index}`} style={styles.imageCard}>
+                  <Image
+                    source={imageSource}
+                    contentFit="contain"
+                    style={styles.reviewImage}
+                  />
+                </View>
+              );
+            })}
           </View>
         ) : (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyIcon}>✦</Text>
 
-            <Text style={styles.emptyTitle}>
-              No customer reviews yet
-            </Text>
+            <Text style={styles.emptyTitle}>No customer reviews yet</Text>
 
             <Text style={styles.emptyText}>
-              Customer reviews will appear here when they
-              are added.
+              Customer reviews will appear here when they are added.
             </Text>
           </View>
         )}

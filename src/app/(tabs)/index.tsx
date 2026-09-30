@@ -17,6 +17,7 @@ import { WebView } from "react-native-webview";
 import { useRouter } from "expo-router";
 
 import { supabase } from "@/lib/supabase";
+import { getCachedData, setCachedData } from "@/lib/cache";
 import {
   CURRENCY_SYMBOL,
   CLOUDINARY_FALLBACK_IMAGE,
@@ -66,6 +67,12 @@ type HomepageStrip = {
   type: "category" | "all" | "prebooking";
 };
 
+type HomepageCache = {
+  settings: SiteSettings;
+  homepageStrips: HomepageStrip[];
+};
+
+const HOMEPAGE_CACHE_KEY = "homepage";
 /* =========================================================
    CONSTANTS
    ========================================================= */
@@ -338,15 +345,26 @@ export default function HomeScreen() {
   /* =======================================================
      LOAD HOMEPAGE DATA
      ======================================================= */
-
   async function loadHome() {
     try {
       setLoading(true);
       setError(null);
 
       /* =====================================================
-         1. LOAD HOMEPAGE SETTINGS
-         ===================================================== */
+       CACHE
+       ===================================================== */
+
+      const cached = await getCachedData<HomepageCache>(HOMEPAGE_CACHE_KEY);
+
+      if (cached) {
+        setSettings(cached.settings);
+        setHomepageStrips(cached.homepageStrips);
+        return;
+      }
+
+      /* =====================================================
+       1. LOAD HOMEPAGE SETTINGS
+       ===================================================== */
 
       const { data: siteSettings, error: settingsError } = await supabase
         .from("site_settings")
@@ -557,6 +575,11 @@ export default function HomeScreen() {
       }
 
       setHomepageStrips(strips);
+
+      await setCachedData<HomepageCache>(HOMEPAGE_CACHE_KEY, {
+        settings: siteSettings as SiteSettings,
+        homepageStrips: strips,
+      });
     } catch (err) {
       console.error("Home loading error:", err);
       setError("Unable to load the shop.");
