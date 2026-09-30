@@ -1,7 +1,7 @@
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
-import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -59,6 +59,14 @@ export default function NewCategoryPage() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deletingImage, setDeletingImage] = useState(false);
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] = useState(false);
+
+  const [cloudinarySettingsLoading, setCloudinarySettingsLoading] =
+    useState(true);
+
+  const [cloudinarySettingsError, setCloudinarySettingsError] = useState<
+    string | null
+  >(null);
 
   // -------------------------------------------------------
   // IMAGE
@@ -70,13 +78,85 @@ export default function NewCategoryPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   // ========================================================
+  // CLOUDINARY PROTECTION
+  // ========================================================
+
+  const refreshCloudinarySetting = useCallback(async () => {
+    setCloudinarySettingsLoading(true);
+    setCloudinarySettingsError(null);
+    setCloudinaryImagesEnabled(false);
+
+    try {
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("cloudinary_images_enabled")
+        .eq("id", true)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data || typeof data.cloudinary_images_enabled !== "boolean") {
+        throw new Error("Cloudinary status is unavailable.");
+      }
+
+      const enabled = data.cloudinary_images_enabled === true;
+
+      setCloudinaryImagesEnabled(enabled);
+
+      return enabled;
+    } catch (error) {
+      setCloudinaryImagesEnabled(false);
+
+      setCloudinarySettingsError(
+        "Unable to check Cloudinary status. Image uploads are blocked until the status can be verified.",
+      );
+
+      throw error;
+    } finally {
+      setCloudinarySettingsLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshCloudinarySetting().catch((error) => {
+        console.error("Cloudinary settings loading error:", error);
+      });
+    }, [refreshCloudinarySetting]),
+  );
+
+  async function ensureCloudinaryUploadAllowed() {
+    try {
+      const enabled = await refreshCloudinarySetting();
+
+      if (!enabled) {
+        Alert.alert(
+          "Cloudinary is full",
+          "Cloudinary is full. Image upload is not allowed.",
+        );
+
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Cloudinary upload status check failed:", error);
+
+      Alert.alert(
+        "Upload unavailable",
+        "Unable to verify Cloudinary status. Image upload is not allowed right now. Please try again.",
+      );
+
+      return false;
+    }
+  }
+  // ========================================================
   // CLOUDINARY DELETE
   // ========================================================
 
-  async function deleteCloudinaryImage(
-    url: string,
-    accessToken: string,
-  ) {
+  async function deleteCloudinaryImage(url: string, accessToken: string) {
     const response = await fetch(
       `${process.env.EXPO_PUBLIC_WEB_API_URL}/api/admin/cloudinary/delete`,
       {
@@ -94,9 +174,7 @@ export default function NewCategoryPage() {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(
-        data?.error ?? "Failed to delete image from Cloudinary.",
-      );
+      throw new Error(data?.error ?? "Failed to delete image from Cloudinary.");
     }
 
     return data;
@@ -108,6 +186,11 @@ export default function NewCategoryPage() {
 
   async function pickAndUploadImage() {
     try {
+      // Check before opening the image picker.
+      if (!(await ensureCloudinaryUploadAllowed())) {
+        return;
+      }
+
       const permission =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -148,17 +231,11 @@ export default function NewCategoryPage() {
 
       setUploading(true);
 
-      const fileName =
-        asset.fileName ?? `category-${Date.now()}.jpg`;
+      const fileName = asset.fileName ?? `category-${Date.now()}.jpg`;
 
       const mimeType = asset.mimeType ?? "image/jpeg";
 
-      console.log(
-        "Uploading category image:",
-        fileName,
-        mimeType,
-        asset.uri,
-      );
+      console.log("Uploading category image:", fileName, mimeType, asset.uri);
 
       // ---------------------------------------------------
       // Expo 57:
@@ -171,7 +248,11 @@ export default function NewCategoryPage() {
 
       formData.append("file", file);
       formData.append("folder", "category");
-
+      // Recheck immediately before uploading in case
+      // Cloudinary was disabled while the image was being selected.
+      if (!(await ensureCloudinaryUploadAllowed())) {
+        return;
+      }
       const response = await fetch(
         `${process.env.EXPO_PUBLIC_WEB_API_URL}/api/upload`,
         {
@@ -186,15 +267,11 @@ export default function NewCategoryPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          data?.error ?? "Category image upload failed.",
-        );
+        throw new Error(data?.error ?? "Category image upload failed.");
       }
 
       if (!data?.url) {
-        throw new Error(
-          "Cloudinary did not return an image URL.",
-        );
+        throw new Error("Cloudinary did not return an image URL.");
       }
 
       setImageFile(file);
@@ -229,64 +306,54 @@ export default function NewCategoryPage() {
       return;
     }
 
-    Alert.alert(
-      "Remove image",
-      "Remove this category image from Cloudinary?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            setDeletingImage(true);
+    Alert.alert("Remove image", "Remove this category image from Cloudinary?", [
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          setDeletingImage(true);
 
-            try {
-              const {
-                data: { session },
-              } = await supabase.auth.getSession();
+          try {
+            const {
+              data: { session },
+            } = await supabase.auth.getSession();
 
-              if (!session?.access_token) {
-                throw new Error(
-                  "Your admin session has expired. Please sign in again.",
-                );
-              }
-
-              await deleteCloudinaryImage(
-                imageUrl,
-                session.access_token,
+            if (!session?.access_token) {
+              throw new Error(
+                "Your admin session has expired. Please sign in again.",
               );
-
-              setImageUrl(null);
-              setImagePublicId(null);
-              setImageFile(null);
-              setImagePreview(null);
-
-              Alert.alert(
-                "Image removed",
-                "The category image has been deleted from Cloudinary.",
-              );
-            } catch (error) {
-              console.error(
-                "Category image deletion error:",
-                error,
-              );
-
-              Alert.alert(
-                "Remove failed",
-                error instanceof Error
-                  ? error.message
-                  : "Could not remove the category image.",
-              );
-            } finally {
-              setDeletingImage(false);
             }
-          },
+
+            await deleteCloudinaryImage(imageUrl, session.access_token);
+
+            setImageUrl(null);
+            setImagePublicId(null);
+            setImageFile(null);
+            setImagePreview(null);
+
+            Alert.alert(
+              "Image removed",
+              "The category image has been deleted from Cloudinary.",
+            );
+          } catch (error) {
+            console.error("Category image deletion error:", error);
+
+            Alert.alert(
+              "Remove failed",
+              error instanceof Error
+                ? error.message
+                : "Could not remove the category image.",
+            );
+          } finally {
+            setDeletingImage(false);
+          }
         },
-      ],
-    );
+      },
+    ]);
   }
 
   // ========================================================
@@ -298,10 +365,7 @@ export default function NewCategoryPage() {
     const trimmedDescription = description.trim();
 
     if (!trimmedName) {
-      Alert.alert(
-        "Category name required",
-        "Please enter a category name.",
-      );
+      Alert.alert("Category name required", "Please enter a category name.");
       return;
     }
 
@@ -333,10 +397,7 @@ export default function NewCategoryPage() {
       // ADMIN CHECK
       // ---------------------------------------------------
 
-      const {
-        data: profile,
-        error: profileError,
-      } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("role")
         .eq("id", user.id)
@@ -365,10 +426,7 @@ export default function NewCategoryPage() {
       // CHECK DUPLICATE CATEGORY NAME
       // ---------------------------------------------------
 
-      const {
-        data: existingName,
-        error: nameError,
-      } = await supabase
+      const { data: existingName, error: nameError } = await supabase
         .from("categories")
         .select("id")
         .ilike("name", trimmedName)
@@ -379,19 +437,14 @@ export default function NewCategoryPage() {
       }
 
       if (existingName) {
-        throw new Error(
-          "A category with this name already exists.",
-        );
+        throw new Error("A category with this name already exists.");
       }
 
       // ---------------------------------------------------
       // CHECK DUPLICATE SLUG
       // ---------------------------------------------------
 
-      const {
-        data: existingSlug,
-        error: slugError,
-      } = await supabase
+      const { data: existingSlug, error: slugError } = await supabase
         .from("categories")
         .select("id")
         .eq("slug", slug)
@@ -417,19 +470,15 @@ export default function NewCategoryPage() {
       // INSERT CATEGORY
       // ---------------------------------------------------
 
-      const { error: insertError } = await supabase
-        .from("categories")
-        .insert({
-          name: trimmedName,
-          slug,
-          description: trimmedDescription || null,
-          sort_order: Number.isFinite(newSortOrder)
-            ? newSortOrder
-            : 0,
-          is_active: isActive,
-          image_url: imageUrl,
-          image_public_id: imagePublicId,
-        });
+      const { error: insertError } = await supabase.from("categories").insert({
+        name: trimmedName,
+        slug,
+        description: trimmedDescription || null,
+        sort_order: Number.isFinite(newSortOrder) ? newSortOrder : 0,
+        is_active: isActive,
+        image_url: imageUrl,
+        image_public_id: imagePublicId,
+      });
 
       if (insertError) {
         throw insertError;
@@ -468,10 +517,7 @@ export default function NewCategoryPage() {
           } = await supabase.auth.getSession();
 
           if (session?.access_token) {
-            await deleteCloudinaryImage(
-              imageUrl,
-              session.access_token,
-            );
+            await deleteCloudinaryImage(imageUrl, session.access_token);
 
             setImageUrl(null);
             setImagePublicId(null);
@@ -488,9 +534,7 @@ export default function NewCategoryPage() {
 
       Alert.alert(
         "Unable to create category",
-        error instanceof Error
-          ? error.message
-          : "Failed to create category.",
+        error instanceof Error ? error.message : "Failed to create category.",
       );
     } finally {
       setSaving(false);
@@ -502,15 +546,10 @@ export default function NewCategoryPage() {
   // ========================================================
 
   return (
-    <SafeAreaView
-      style={styles.safeArea}
-      edges={["top", "bottom"]}
-    >
+    <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={styles.keyboardAvoiding}
-        behavior={
-          Platform.OS === "ios" ? "padding" : undefined
-        }
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
           contentContainerStyle={styles.content}
@@ -521,24 +560,17 @@ export default function NewCategoryPage() {
 
           <View style={styles.header}>
             <Pressable
-              onPress={() =>
-                router.replace("/admin/categories")
-              }
+              onPress={() => router.replace("/admin/categories")}
               style={styles.backButton}
-              disabled={
-                saving || uploading || deletingImage
-              }
+              disabled={saving || uploading || deletingImage}
             >
-              <Text style={styles.backText}>
-                ‹ Categories
-              </Text>
+              <Text style={styles.backText}>‹ Categories</Text>
             </Pressable>
 
             <Text style={styles.title}>New Category</Text>
 
             <Text style={styles.subtitle}>
-              Create a category and configure its shop
-              appearance.
+              Create a category and configure its shop appearance.
             </Text>
           </View>
 
@@ -558,18 +590,14 @@ export default function NewCategoryPage() {
 
               <View style={styles.slugBox}>
                 <Text
-                  style={[
-                    styles.slugText,
-                    !slug && styles.slugPlaceholder,
-                  ]}
+                  style={[styles.slugText, !slug && styles.slugPlaceholder]}
                 >
                   {slug || "jewellery"}
                 </Text>
               </View>
 
               <Text style={styles.helper}>
-                Generated automatically from the category
-                name.
+                Generated automatically from the category name.
               </Text>
             </View>
 
@@ -589,9 +617,7 @@ export default function NewCategoryPage() {
               keyboardType="number-pad"
             />
 
-            <Text style={styles.helper}>
-              Lower numbers appear first.
-            </Text>
+            <Text style={styles.helper}>Lower numbers appear first.</Text>
           </Section>
 
           {/* STATUS */}
@@ -618,9 +644,7 @@ export default function NewCategoryPage() {
               </View>
             ) : (
               <View style={styles.noImage}>
-                <Text style={styles.noImageText}>
-                  No category image
-                </Text>
+                <Text style={styles.noImageText}>No category image</Text>
               </View>
             )}
 
@@ -629,10 +653,7 @@ export default function NewCategoryPage() {
                 style={styles.secondaryButton}
                 onPress={pickAndUploadImage}
                 disabled={
-                  uploading ||
-                  saving ||
-                  deletingImage ||
-                  !!imagePreview
+                  uploading || saving || deletingImage || !!imagePreview
                 }
               >
                 {uploading ? (
@@ -658,34 +679,21 @@ export default function NewCategoryPage() {
                 <Pressable
                   style={styles.removeImageButton}
                   onPress={removeImage}
-                  disabled={
-                    uploading ||
-                    saving ||
-                    deletingImage
-                  }
+                  disabled={uploading || saving || deletingImage}
                 >
                   {deletingImage ? (
-                    <ActivityIndicator
-                      color="#b42318"
-                      size="small"
-                    />
+                    <ActivityIndicator color="#b42318" size="small" />
                   ) : (
-                    <Text style={styles.removeImageText}>
-                      Remove
-                    </Text>
+                    <Text style={styles.removeImageText}>Remove</Text>
                   )}
                 </Pressable>
               ) : null}
             </View>
 
-            <Text style={styles.helper}>
-              Choose an image Max 4.5 MB.
-            </Text>
+            <Text style={styles.helper}>Choose an image Max 4.5 MB.</Text>
 
             {imageFile ? (
-              <Text style={styles.uploadedText}>
-                New image uploaded ✓
-              </Text>
+              <Text style={styles.uploadedText}>New image uploaded ✓</Text>
             ) : null}
           </Section>
 
@@ -695,36 +703,21 @@ export default function NewCategoryPage() {
             <View style={styles.bottomButtons}>
               <Pressable
                 style={styles.cancelButton}
-                onPress={() =>
-                  router.replace("/admin/categories")
-                }
-                disabled={
-                  saving ||
-                  uploading ||
-                  deletingImage
-                }
+                onPress={() => router.replace("/admin/categories")}
+                disabled={saving || uploading || deletingImage}
               >
-                <Text style={styles.cancelText}>
-                  Cancel
-                </Text>
+                <Text style={styles.cancelText}>Cancel</Text>
               </Pressable>
 
               <Pressable
                 style={styles.saveButton}
                 onPress={handleSave}
-                disabled={
-                  saving ||
-                  uploading ||
-                  deletingImage ||
-                  !name.trim()
-                }
+                disabled={saving || uploading || deletingImage || !name.trim()}
               >
                 {saving ? (
                   <ActivityIndicator color="#ffffff" />
                 ) : (
-                  <Text style={styles.saveText}>
-                    Add Category
-                  </Text>
+                  <Text style={styles.saveText}>Add Category</Text>
                 )}
               </Pressable>
             </View>
@@ -785,10 +778,7 @@ function Field({
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
         editable={true}
-        style={[
-          styles.input,
-          multiline && styles.textarea,
-        ]}
+        style={[styles.input, multiline && styles.textarea]}
       />
     </View>
   );
@@ -808,13 +798,9 @@ function DisplaySwitch({
   return (
     <View style={styles.switchRow}>
       <View style={styles.switchText}>
-        <Text style={styles.switchLabel}>
-          {label}
-        </Text>
+        <Text style={styles.switchLabel}>{label}</Text>
 
-        <Text style={styles.switchDescription}>
-          {description}
-        </Text>
+        <Text style={styles.switchDescription}>{description}</Text>
       </View>
 
       <Switch

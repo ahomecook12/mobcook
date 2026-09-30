@@ -2,18 +2,22 @@ import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { notifyCartChanged, supabase } from "@/lib/supabase";
-import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
+import {
+  CURRENCY_SYMBOL,
+  CLOUDINARY_FALLBACK_IMAGE,
+  STORE,
+} from "@/constants/store";
 
 type CartProduct = {
   id: string;
@@ -39,40 +43,45 @@ export default function CartScreen() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [catalogMode, setCatalogMode] = useState(false);
 
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] =
+    useState(false);
+
   /*
-   * Reload the cart whenever the screen becomes active.
-   *
-   * Also reload catalog mode so the cart immediately reflects
-   * the current storefront setting.
+   * Reload the cart and storefront settings whenever
+   * this screen becomes active.
    */
   useFocusEffect(
     useCallback(() => {
-      loadCart();
+      void loadCart();
     }, []),
   );
 
   async function loadCart() {
     try {
       setLoading(true);
+      setCloudinaryImagesEnabled(false);
 
       // ---------------------------------------------------------
-      // Load catalog mode
+      // Load catalog mode and Cloudinary protection
       // ---------------------------------------------------------
 
       const { data: siteSettings, error: siteSettingsError } =
         await supabase
           .from("site_settings")
-          .select("catalog_mode")
+          .select("catalog_mode, cloudinary_images_enabled")
           .eq("id", true)
           .maybeSingle();
 
       if (siteSettingsError) {
         console.error("Site settings loading error:", siteSettingsError);
 
-        // Do not block the cart if the setting cannot be loaded.
         setCatalogMode(false);
+        setCloudinaryImagesEnabled(false);
       } else {
         setCatalogMode(Boolean(siteSettings?.catalog_mode));
+        setCloudinaryImagesEnabled(
+          siteSettings?.cloudinary_images_enabled === true,
+        );
       }
 
       // ---------------------------------------------------------
@@ -138,42 +147,51 @@ export default function CartScreen() {
         throw itemsError;
       }
 
-      const formattedItems: CartItem[] = (cartItems ?? []).flatMap((item) => {
-        const product = item.products as
-          | CartProduct
-          | CartProduct[]
-          | null;
+      const formattedItems: CartItem[] = (cartItems ?? []).flatMap(
+        (item) => {
+          const product = item.products as
+            | CartProduct
+            | CartProduct[]
+            | null;
 
-        const actualProduct = Array.isArray(product) ? product[0] : product;
+          const actualProduct = Array.isArray(product)
+            ? product[0]
+            : product;
 
-        if (!actualProduct) {
-          return [];
-        }
+          if (!actualProduct) {
+            return [];
+          }
 
-        return [
-          {
-            id: item.id,
-            quantity: item.quantity,
-            product: {
-              ...actualProduct,
-              price: Number(actualProduct.price),
-              sale_price:
-                actualProduct.sale_price == null
-                  ? null
-                  : Number(actualProduct.sale_price),
-              stock: actualProduct.stock ?? 0,
-              images: Array.isArray(actualProduct.images)
-                ? actualProduct.images
-                : [],
+          return [
+            {
+              id: item.id,
+              quantity: item.quantity,
+              product: {
+                ...actualProduct,
+                price: Number(actualProduct.price),
+                sale_price:
+                  actualProduct.sale_price == null
+                    ? null
+                    : Number(actualProduct.sale_price),
+                stock: actualProduct.stock ?? 0,
+                images: Array.isArray(actualProduct.images)
+                  ? actualProduct.images
+                      .filter(
+                        (image): image is string =>
+                          typeof image === "string" &&
+                          image.trim().length > 0,
+                      )
+                      .map((image) => image.trim())
+                  : [],
+              },
             },
-          },
-        ];
-      });
+          ];
+        },
+      );
 
       setItems(formattedItems);
     } catch (error) {
       console.error("Cart loading error:", error);
-
       Alert.alert("Unable to load cart", "Please try again.");
     } finally {
       setLoading(false);
@@ -196,9 +214,7 @@ export default function CartScreen() {
 
     /*
      * Normal products cannot exceed available stock.
-     *
-     * Pre-booking products intentionally have stock = 0,
-     * so they do not have this restriction.
+     * Pre-booking products do not have this restriction.
      */
     if (!isPreBooking && newQuantity > item.product.stock) {
       Alert.alert(
@@ -240,7 +256,6 @@ export default function CartScreen() {
       );
     } catch (error) {
       console.error("Quantity update error:", error);
-
       Alert.alert("Unable to update cart", "Please try again.");
     } finally {
       setUpdatingId(null);
@@ -273,7 +288,6 @@ export default function CartScreen() {
       );
     } catch (error) {
       console.error("Remove cart item error:", error);
-
       Alert.alert("Unable to remove item", "Please try again.");
     } finally {
       setUpdatingId(null);
@@ -288,7 +302,6 @@ export default function CartScreen() {
     return (
       <SafeAreaView style={styles.center}>
         <ActivityIndicator size="large" />
-
         <Text style={styles.loadingText}>Loading cart...</Text>
       </SafeAreaView>
     );
@@ -328,10 +341,8 @@ export default function CartScreen() {
   // -------------------------------------------------------------
 
   /*
-   * We still calculate the real subtotal because checkout/order
-   * creation continues to use the actual product prices.
-   *
-   * Catalog mode only hides these values from the customer UI.
+   * Real totals are still calculated for checkout/order creation.
+   * Catalog mode hides them from the customer UI.
    */
   const subtotal = items.reduce((total, item) => {
     const unitPrice =
@@ -357,9 +368,7 @@ export default function CartScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.container}
       >
-        {/* =====================================================
-            Header
-           ===================================================== */}
+        {/* Header */}
 
         <View style={styles.titleRow}>
           <Text style={styles.title}>Your Cart</Text>
@@ -369,9 +378,7 @@ export default function CartScreen() {
           </Text>
         </View>
 
-        {/* =====================================================
-            Catalog mode information
-           ===================================================== */}
+        {/* Catalog mode information */}
 
         {catalogMode && (
           <View style={styles.catalogNotice}>
@@ -385,9 +392,7 @@ export default function CartScreen() {
           </View>
         )}
 
-        {/* =====================================================
-            Items
-           ===================================================== */}
+        {/* Items */}
 
         <View style={styles.items}>
           {items.map((item) => {
@@ -403,7 +408,18 @@ export default function CartScreen() {
 
             const lineTotal = unitPrice * item.quantity;
 
-            const image = product.images?.[0] ?? null;
+            /*
+             * Pick the first permitted image.
+             * Disabled Cloudinary URLs never reach the Image source.
+             */
+            const image =
+              product.images.find((imageUrl) => {
+                const isCloudinaryImage = imageUrl
+                  .toLowerCase()
+                  .includes("res.cloudinary.com");
+
+                return !isCloudinaryImage || cloudinaryImagesEnabled;
+              }) ?? null;
 
             const busy = updatingId === item.id;
 
@@ -414,18 +430,16 @@ export default function CartScreen() {
                 <View style={styles.imageContainer}>
                   {image ? (
                     <Image
-                      source={{
-                        uri: image,
-                      }}
+                      source={{ uri: image }}
                       style={styles.image}
-                      resizeMode="cover"
+                      contentFit="cover"
                     />
                   ) : (
-                    <View style={styles.noImage}>
-                      <Text style={styles.noImageText}>
-                        No image
-                      </Text>
-                    </View>
+                    <Image
+                      source={CLOUDINARY_FALLBACK_IMAGE}
+                      style={styles.image}
+                      contentFit="contain"
+                    />
                   )}
                 </View>
 
@@ -466,14 +480,9 @@ export default function CartScreen() {
                   <View style={styles.bottomRow}>
                     <View style={styles.quantityControl}>
                       <Pressable
-                        disabled={
-                          busy || item.quantity <= 1
-                        }
+                        disabled={busy || item.quantity <= 1}
                         onPress={() =>
-                          updateQuantity(
-                            item,
-                            item.quantity - 1,
-                          )
+                          updateQuantity(item, item.quantity - 1)
                         }
                         style={styles.quantityButton}
                       >
@@ -493,10 +502,7 @@ export default function CartScreen() {
                             item.quantity >= product.stock)
                         }
                         onPress={() =>
-                          updateQuantity(
-                            item,
-                            item.quantity + 1,
-                          )
+                          updateQuantity(item, item.quantity + 1)
                         }
                         style={styles.quantityButton}
                       >
@@ -530,9 +536,7 @@ export default function CartScreen() {
           })}
         </View>
 
-        {/* =====================================================
-            Summary
-           ===================================================== */}
+        {/* Summary */}
 
         <View style={styles.summary}>
           {!catalogMode ? (
@@ -548,15 +552,13 @@ export default function CartScreen() {
               </View>
 
               <Text style={styles.shippingNote}>
-                Shipping and payment options will be shown at
-                checkout.
+                Shipping and payment options will be shown at checkout.
               </Text>
             </>
           ) : (
             <Text style={styles.catalogSummaryText}>
-              Submit your order and the admin will contact you
-              with the price details, shipping and payment
-              options.
+              Submit your order and the admin will contact you with
+              the price details, shipping and payment options.
             </Text>
           )}
 
@@ -614,9 +616,7 @@ const styles = StyleSheet.create({
     paddingBottom: 50,
   },
 
-  /* =======================================================
-     Title
-     ======================================================= */
+  /* Title */
 
   titleRow: {
     flexDirection: "row",
@@ -636,9 +636,7 @@ const styles = StyleSheet.create({
     color: "#777",
   },
 
-  /* =======================================================
-     Catalog mode
-     ======================================================= */
+  /* Catalog mode */
 
   catalogNotice: {
     marginBottom: 16,
@@ -663,9 +661,7 @@ const styles = StyleSheet.create({
     color: "#777",
   },
 
-  /* =======================================================
-     Cart items
-     ======================================================= */
+  /* Cart items */
 
   items: {
     gap: 14,
@@ -795,9 +791,7 @@ const styles = StyleSheet.create({
     color: "#b3261e",
   },
 
-  /* =======================================================
-     Summary
-     ======================================================= */
+  /* Summary */
 
   summary: {
     marginTop: 25,
@@ -864,9 +858,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
 
-  /* =======================================================
-     Empty cart
-     ======================================================= */
+  /* Empty cart */
 
   emptyContainer: {
     flex: 1,

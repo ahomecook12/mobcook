@@ -1,7 +1,7 @@
-import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
 import {
-  ActivityIndicator,  
+  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,7 +12,11 @@ import {
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
+import {
+  CLOUDINARY_FALLBACK_IMAGE,
+  CURRENCY_SYMBOL,
+  STORE,
+} from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 type Product = {
@@ -28,13 +32,15 @@ type Product = {
 };
 
 function ProductThumbnail({ uri }: { uri: string | null }) {
-  const [failed, setFailed] = useState(!uri);
+  const [failed, setFailed] = useState(false);
 
   if (failed || !uri) {
     return (
-      <View style={styles.productImagePlaceholder}>
-        <Text style={styles.productImagePlaceholderText}>No image</Text>
-      </View>
+      <Image
+        source={CLOUDINARY_FALLBACK_IMAGE}
+        style={styles.productImage}
+        contentFit="contain"
+      />
     );
   }
 
@@ -43,7 +49,7 @@ function ProductThumbnail({ uri }: { uri: string | null }) {
       source={{ uri }}
       style={styles.productImage}
       contentFit="cover"
-       transition={150}
+      transition={150}
       onError={() => setFailed(true)}
     />
   );
@@ -56,7 +62,13 @@ export default function AdminProductsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] =
+    useState(false);
+
   const loadProducts = useCallback(async () => {
+    // Block Cloudinary images until the current setting is checked.
+    setCloudinaryImagesEnabled(false);
+
     try {
       const {
         data: { user },
@@ -78,20 +90,45 @@ export default function AdminProductsPage() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("products")
-        .select(
-          "id, name, price, sale_price, stock, active, available_for_sale, sticker, images",
-        )
-        .order("name");
+      const [productsResult, siteSettingsResult] = await Promise.all([
+        supabase
+          .from("products")
+          .select(
+            "id, name, price, sale_price, stock, active, available_for_sale, sticker, images",
+          )
+          .order("name"),
 
-      if (error) {
-        console.log("Unable to load products:", error.message);
+        supabase
+          .from("site_settings")
+          .select("cloudinary_images_enabled")
+          .eq("id", true)
+          .maybeSingle(),
+      ]);
+
+      if (siteSettingsResult.error) {
+        console.log(
+          "Unable to load Cloudinary setting:",
+          siteSettingsResult.error.message,
+        );
+
+        setCloudinaryImagesEnabled(false);
+      } else {
+        setCloudinaryImagesEnabled(
+          siteSettingsResult.data?.cloudinary_images_enabled === true,
+        );
+      }
+
+      if (productsResult.error) {
+        console.log(
+          "Unable to load products:",
+          productsResult.error.message,
+        );
         return;
       }
 
-      setProducts((data ?? []) as Product[]);
+      setProducts((productsResult.data ?? []) as Product[]);
     } catch (error) {
+      setCloudinaryImagesEnabled(false);
       console.log("Admin products error:", error);
     } finally {
       setLoading(false);
@@ -99,38 +136,47 @@ export default function AdminProductsPage() {
     }
   }, [router]);
 
-  useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadProducts();
+    }, [loadProducts]),
+  );
 
   function handleRefresh() {
     setRefreshing(true);
-    loadProducts();
+    void loadProducts();
   }
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
-     
-
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={["top", "bottom"]}
+      >
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={STORE.colors.primary} />
+          <ActivityIndicator
+            size="large"
+            color={STORE.colors.primary}
+          />
 
-          <Text style={styles.loadingText}>Loading products...</Text>
+          <Text style={styles.loadingText}>
+            Loading products...
+          </Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={[ "bottom"]}>
-      
-
+    <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+          />
         }
       >
         {/* PAGE HEADER */}
@@ -139,7 +185,9 @@ export default function AdminProductsPage() {
           <View style={styles.headerText}>
             <Text style={styles.title}>Products</Text>
 
-            <Text style={styles.subtitle}>Manage your shop products.</Text>
+            <Text style={styles.subtitle}>
+              Manage your shop products.
+            </Text>
           </View>
 
           <Pressable
@@ -154,10 +202,13 @@ export default function AdminProductsPage() {
 
         <View style={styles.countRow}>
           <Text style={styles.countText}>
-            {products.length} {products.length === 1 ? "product" : "products"}
+            {products.length}{" "}
+            {products.length === 1 ? "product" : "products"}
           </Text>
 
-          <Text style={styles.countHint}>Pull down to refresh</Text>
+          <Text style={styles.countHint}>
+            Pull down to refresh
+          </Text>
         </View>
 
         {/* PRODUCTS */}
@@ -176,7 +227,9 @@ export default function AdminProductsPage() {
               style={styles.emptyButton}
               onPress={() => router.push("/admin/products/new")}
             >
-              <Text style={styles.emptyButtonText}>+ Add Product</Text>
+              <Text style={styles.emptyButtonText}>
+                + Add Product
+              </Text>
             </Pressable>
           </View>
         ) : (
@@ -185,11 +238,33 @@ export default function AdminProductsPage() {
               const stock = product.stock ?? 0;
 
               const displayPrice =
-                product.sale_price != null ? product.sale_price : product.price;
+                product.sale_price != null
+                  ? product.sale_price
+                  : product.price;
 
               const hasSale =
                 product.sale_price != null &&
                 product.sale_price < product.price;
+
+              const image =
+                product.images
+                  ?.find((imageUrl) => {
+                    if (
+                      typeof imageUrl !== "string" ||
+                      imageUrl.trim().length === 0
+                    ) {
+                      return false;
+                    }
+
+                    const isCloudinaryImage = imageUrl
+                      .toLowerCase()
+                      .includes("res.cloudinary.com");
+
+                    return (
+                      !isCloudinaryImage || cloudinaryImagesEnabled
+                    );
+                  })
+                  ?.trim() ?? null;
 
               return (
                 <Pressable
@@ -206,17 +281,16 @@ export default function AdminProductsPage() {
                   }
                 >
                   <ProductThumbnail
-                    uri={
-                      product.images?.find(
-                        (image) =>
-                          typeof image === "string" && image.trim().length > 0,
-                      ) ?? null
-                    }
+                    key={image ?? "fallback"}
+                    uri={image}
                   />
 
                   <View style={styles.productMain}>
                     <View style={styles.productTitleRow}>
-                      <Text style={styles.productName} numberOfLines={2}>
+                      <Text
+                        style={styles.productName}
+                        numberOfLines={2}
+                      >
                         {product.name}
                       </Text>
 
@@ -232,17 +306,21 @@ export default function AdminProductsPage() {
                     <View style={styles.detailsRow}>
                       <View style={styles.priceContainer}>
                         <Text style={styles.price}>
-                          {CURRENCY_SYMBOL} {Number(displayPrice).toFixed(2)}
+                          {CURRENCY_SYMBOL}{" "}
+                          {Number(displayPrice).toFixed(2)}
                         </Text>
 
                         {hasSale ? (
                           <Text style={styles.originalPrice}>
-                            {CURRENCY_SYMBOL} {Number(product.price).toFixed(2)}
+                            {CURRENCY_SYMBOL}{" "}
+                            {Number(product.price).toFixed(2)}
                           </Text>
                         ) : null}
                       </View>
 
-                      <Text style={styles.stockText}>Stock: {stock}</Text>
+                      <Text style={styles.stockText}>
+                        Stock: {stock}
+                      </Text>
                     </View>
 
                     <View style={styles.statusRow}>
@@ -268,7 +346,9 @@ export default function AdminProductsPage() {
 
                       {product.available_for_sale && stock === 0 ? (
                         <View style={styles.prebookingBadge}>
-                          <Text style={styles.prebookingText}>Prebooking</Text>
+                          <Text style={styles.prebookingText}>
+                            Prebooking
+                          </Text>
                         </View>
                       ) : null}
                     </View>

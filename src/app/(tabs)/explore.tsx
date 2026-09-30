@@ -1,4 +1,8 @@
-import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
+import {
+  CURRENCY_SYMBOL,
+  CLOUDINARY_FALLBACK_IMAGE,
+  STORE,
+} from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -47,7 +51,7 @@ export default function ProductsScreen() {
   const [selectedCategory, setSelectedCategory] = useState("all");
 
   const [catalogMode, setCatalogMode] = useState(false);
-
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] = useState(true);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("newest");
 
@@ -96,7 +100,7 @@ export default function ProductsScreen() {
 
         supabase
           .from("site_settings")
-          .select("catalog_mode")
+          .select("catalog_mode, cloudinary_images_enabled")
           .eq("id", true)
           .single(),
       ]);
@@ -141,6 +145,9 @@ export default function ProductsScreen() {
       setProducts(formattedProducts);
       setCategories(loadedCategories);
       setCatalogMode(siteSettings?.catalog_mode === true);
+      setCloudinaryImagesEnabled(
+        siteSettings?.cloudinary_images_enabled ?? true,
+      );
     } catch (err) {
       console.error("Products loading error:", err);
       setError("Unable to load products.");
@@ -349,6 +356,7 @@ export default function ProductsScreen() {
                 key={product.id}
                 product={product}
                 catalogMode={catalogMode}
+                cloudinaryImagesEnabled={cloudinaryImagesEnabled}
               />
             ))}
           </View>
@@ -425,14 +433,29 @@ function SortButton({
 function ProductCard({
   product,
   catalogMode,
+  cloudinaryImagesEnabled,
 }: {
   product: Product;
   catalogMode: boolean;
+  cloudinaryImagesEnabled: boolean;
 }) {
   const router = useRouter();
   const [imageFailed, setImageFailed] = useState(false);
 
-  const image = product.images[0]?.trim() ?? null;
+  const image =
+    product.images
+      .find((item) => {
+        const url = item?.trim();
+
+        if (!url) {
+          return false;
+        }
+
+        const isCloudinaryImage = url.includes("res.cloudinary.com");
+
+        return !isCloudinaryImage || cloudinaryImagesEnabled;
+      })
+      ?.trim() ?? null;
 
   const isOnSale =
     product.sale_price !== null && product.sale_price < product.price;
@@ -471,9 +494,11 @@ function ProductCard({
             }}
           />
         ) : (
-          <View style={styles.noImage}>
-            <Text style={styles.noImageText}>No image</Text>
-          </View>
+          <Image
+            source={CLOUDINARY_FALLBACK_IMAGE}
+            style={styles.productImage}
+            contentFit="cover"
+          />
         )}
 
         {/* Sticker */}
@@ -504,7 +529,9 @@ function ProductCard({
               </Text>
             </View>
           ) : (
-            <Text style={styles.price}>{CURRENCY_SYMBOL} {product.price.toFixed(2)}</Text>
+            <Text style={styles.price}>
+              {CURRENCY_SYMBOL} {product.price.toFixed(2)}
+            </Text>
           ))}
       </View>
     </Pressable>

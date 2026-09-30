@@ -6,11 +6,7 @@ import ProductForm, {
 import { supabase } from "@/lib/supabase";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function EditProductScreen() {
@@ -45,12 +41,11 @@ export default function EditProductScreen() {
         return;
       }
 
-      const { data: profile, error: profileError } =
-        await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .maybeSingle();
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
 
       if (profileError) {
         throw profileError;
@@ -87,6 +82,7 @@ export default function EditProductScreen() {
               depth,
               images,
               video_urls,
+              youtube_post_urls,
               active,
               available_for_sale,
               display_settings,
@@ -97,10 +93,7 @@ export default function EditProductScreen() {
           .eq("id", id)
           .maybeSingle(),
 
-        supabase
-          .from("categories")
-          .select("id, name")
-          .order("name"),
+        supabase.from("categories").select("id, name").order("name"),
 
         supabase
           .from("product_categories")
@@ -127,9 +120,7 @@ export default function EditProductScreen() {
       setProduct(productData as Product);
       setCategories((categoryData ?? []) as Category[]);
       setCategoryIds(
-        (productCategoryData ?? []).map(
-          (item) => item.category_id,
-        ),
+        (productCategoryData ?? []).map((item) => item.category_id),
       );
     } catch (error) {
       console.log("Unable to load product:", error);

@@ -17,7 +17,11 @@ import { WebView } from "react-native-webview";
 import { useRouter } from "expo-router";
 
 import { supabase } from "@/lib/supabase";
-import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
+import {
+  CURRENCY_SYMBOL,
+  CLOUDINARY_FALLBACK_IMAGE,
+  STORE,
+} from "@/constants/store";
 
 /* =========================================================
    TYPES
@@ -40,6 +44,7 @@ type SiteSettings = {
   hero_media: HeroMedia[] | null;
   homepage_category_ids: string[] | null;
   catalog_mode: boolean;
+  cloudinary_images_enabled: boolean;
 };
 
 type Product = {
@@ -346,7 +351,7 @@ export default function HomeScreen() {
       const { data: siteSettings, error: settingsError } = await supabase
         .from("site_settings")
         .select(
-          "hero_title, hero_description, hero_image_url, hero_media, homepage_category_ids, catalog_mode",
+          "hero_title, hero_description, hero_image_url, hero_media, homepage_category_ids, catalog_mode, cloudinary_images_enabled",
         )
         .eq("id", true)
         .single();
@@ -570,21 +575,33 @@ export default function HomeScreen() {
      There is deliberately NO "video" handling here.
      ========================================================= */
 
-  const heroMedia: HeroMedia[] = Array.isArray(settings?.hero_media)
-    ? settings.hero_media.filter(
-        (media): media is HeroMedia =>
-          media &&
-          typeof media.url === "string" &&
-          (media.type === "image" || media.type === "youtube"),
-      )
-    : settings?.hero_image_url
-      ? [
-          {
-            url: settings.hero_image_url,
-            type: "image",
-          },
-        ]
-      : [];
+  const cloudinaryImagesEnabled = settings?.cloudinary_images_enabled ?? true;
+
+  const heroMedia: HeroMedia[] = (
+    Array.isArray(settings?.hero_media)
+      ? settings.hero_media.filter(
+          (media): media is HeroMedia =>
+            media &&
+            typeof media.url === "string" &&
+            (media.type === "image" || media.type === "youtube"),
+        )
+      : settings?.hero_image_url
+        ? [
+            {
+              url: settings.hero_image_url,
+              type: "image" as const,
+            },
+          ]
+        : []
+  ).filter((media) => {
+    if (media.type === "youtube") {
+      return true;
+    }
+
+    const isCloudinaryImage = media.url.includes("res.cloudinary.com");
+
+    return !isCloudinaryImage || cloudinaryImagesEnabled;
+  });
 
   /* =========================================================
      HERO AUTO SCROLL
@@ -1052,11 +1069,21 @@ export default function HomeScreen() {
                       ...strip.products,
                     ].map((product, index) => {
                       const image = Array.isArray(product.images)
-                        ? (product.images.find(
-                            (item) =>
-                              typeof item === "string" &&
-                              item.trim().length > 0,
-                          ) ?? null)
+                        ? (product.images.find((item) => {
+                            if (
+                              typeof item !== "string" ||
+                              item.trim().length === 0
+                            ) {
+                              return false;
+                            }
+
+                            const isCloudinaryImage =
+                              item.includes("res.cloudinary.com");
+
+                            return (
+                              !isCloudinaryImage || cloudinaryImagesEnabled
+                            );
+                          }) ?? null)
                         : null;
 
                       const price = product.sale_price ?? product.price;
@@ -1085,9 +1112,11 @@ export default function HomeScreen() {
                                 transition={150}
                               />
                             ) : (
-                              <Text style={styles.imagePlaceholder}>
-                                No image
-                              </Text>
+                              <Image
+                                source={CLOUDINARY_FALLBACK_IMAGE}
+                                style={styles.productImageActual}
+                                contentFit="cover"
+                              />
                             )}
                           </View>
 

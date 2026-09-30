@@ -16,7 +16,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { STORE, STORE_LOCALE } from "@/constants/store";
+import {
+  CLOUDINARY_FALLBACK_IMAGE,
+  STORE,
+  STORE_LOCALE,
+} from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 /* =========================================================
@@ -86,6 +90,26 @@ type PaymentMethod = {
 type DeliveryMode = "booked" | "requested";
 
 /* =========================================================
+   IMAGE PROTECTION
+   ========================================================= */
+
+function canDisplayImage(
+  imageUrl: string | null | undefined,
+  cloudinaryImagesEnabled: boolean,
+): boolean {
+  if (!imageUrl?.trim()) {
+    return false;
+  }
+
+  const isCloudinaryImage = imageUrl
+    .trim()
+    .toLowerCase()
+    .includes("res.cloudinary.com");
+
+  return !isCloudinaryImage || cloudinaryImagesEnabled;
+}
+
+/* =========================================================
    COMPONENT
    ========================================================= */
 
@@ -96,17 +120,19 @@ export default function CheckoutScreen() {
   const [placingOrder, setPlacingOrder] = useState(false);
 
   const [items, setItems] = useState<CartItem[]>([]);
-  const [settings, setSettings] = useState<StorefrontSettings | null>(null);
+  const [settings, setSettings] =
+    useState<StorefrontSettings | null>(null);
 
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [paymentMethods, setPaymentMethods] =
+    useState<PaymentMethod[]>([]);
 
   const [paymentMethodId, setPaymentMethodId] = useState("");
-
   const [catalogMode, setCatalogMode] = useState(false);
 
-  /* =========================================================
-     SHIPPING ADDRESS
-     ========================================================= */
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] =
+    useState(false);
+
+  /* Shipping address */
 
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
@@ -115,9 +141,7 @@ export default function CheckoutScreen() {
   const [city, setCity] = useState("");
   const [country, setCountry] = useState("India");
 
-  /* =========================================================
-     PREFERRED FULFILLMENT
-     ========================================================= */
+  /* Preferred fulfillment */
 
   const [preferredFulfillmentAt, setPreferredFulfillmentAt] =
     useState<Date | null>(null);
@@ -128,11 +152,10 @@ export default function CheckoutScreen() {
   const [showFulfillmentTimePicker, setShowFulfillmentTimePicker] =
     useState(false);
 
-  /* =========================================================
-     DELIVERY SERVICE
-     ========================================================= */
+  /* Delivery service */
 
-  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("requested");
+  const [deliveryMode, setDeliveryMode] =
+    useState<DeliveryMode>("requested");
 
   const [deliveryDetails, setDeliveryDetails] = useState("");
 
@@ -142,13 +165,14 @@ export default function CheckoutScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadCheckout();
+      void loadCheckout();
     }, []),
   );
 
   async function loadCheckout() {
     try {
       setLoading(true);
+      setCloudinaryImagesEnabled(false);
 
       const {
         data: { user },
@@ -208,7 +232,7 @@ export default function CheckoutScreen() {
 
         supabase
           .from("site_settings")
-          .select("catalog_mode")
+          .select("catalog_mode, cloudinary_images_enabled")
           .eq("id", true)
           .maybeSingle(),
 
@@ -234,9 +258,7 @@ export default function CheckoutScreen() {
           }),
       ]);
 
-      /* =====================================================
-         PROFILE
-         ===================================================== */
+      /* Profile */
 
       if (profileResult.error) {
         throw profileResult.error;
@@ -250,12 +272,9 @@ export default function CheckoutScreen() {
       setPostalCode(profile?.postal_code ?? "");
 
       setCity(profile?.city?.trim() ? profile.city : "Bangalore");
-
       setCountry(profile?.country?.trim() ? profile.country : "India");
 
-      /* =====================================================
-         STOREFRONT SETTINGS
-         ===================================================== */
+      /* Storefront settings */
 
       if (settingsResult.error) {
         throw settingsResult.error;
@@ -264,39 +283,46 @@ export default function CheckoutScreen() {
       if (settingsResult.data) {
         setSettings({
           ...settingsResult.data,
-          shipping_price: Number(settingsResult.data.shipping_price ?? 0),
+          shipping_price: Number(
+            settingsResult.data.shipping_price ?? 0,
+          ),
         } as StorefrontSettings);
       } else {
         setSettings(null);
       }
 
-      /* =====================================================
-         CATALOG MODE
-         ===================================================== */
+      /* Catalog mode and Cloudinary protection */
 
       if (siteSettingsResult.error) {
         throw siteSettingsResult.error;
       }
 
-      setCatalogMode(Boolean(siteSettingsResult.data?.catalog_mode));
+      setCatalogMode(
+        Boolean(siteSettingsResult.data?.catalog_mode),
+      );
 
-      /* =====================================================
-         PAYMENT METHODS
-         ===================================================== */
+      setCloudinaryImagesEnabled(
+        siteSettingsResult.data?.cloudinary_images_enabled === true,
+      );
+
+      /* Payment methods */
 
       if (paymentMethodsResult.error) {
         throw paymentMethodsResult.error;
       }
 
-      const loadedPaymentMethods = (paymentMethodsResult.data ??
-        []) as PaymentMethod[];
+      const loadedPaymentMethods = (
+        paymentMethodsResult.data ?? []
+      ) as PaymentMethod[];
 
       setPaymentMethods(loadedPaymentMethods);
 
       setPaymentMethodId((current) => {
         if (
           current &&
-          loadedPaymentMethods.some((method) => method.id === current)
+          loadedPaymentMethods.some(
+            (method) => method.id === current,
+          )
         ) {
           return current;
         }
@@ -304,9 +330,7 @@ export default function CheckoutScreen() {
         return "";
       });
 
-      /* =====================================================
-         CART
-         ===================================================== */
+      /* Cart */
 
       if (cartResult.error) {
         throw cartResult.error;
@@ -317,96 +341,102 @@ export default function CheckoutScreen() {
         return;
       }
 
-      const { data: cartItems, error: cartItemsError } = await supabase
-        .from("cart_items")
-        .select(
-          `
-            id,
-            quantity,
-            product_id,
-            products (
+      const { data: cartItems, error: cartItemsError } =
+        await supabase
+          .from("cart_items")
+          .select(
+            `
               id,
-              name,
-              price,
-              sale_price,
-              stock,
-              images,
-              available_for_sale,
-              weight_grams,
-              size,
-              height,
-              width,
-              depth
-            )
-          `,
-        )
-        .eq("cart_id", cartResult.data.id)
-        .order("created_at", {
-          ascending: true,
-        });
+              quantity,
+              product_id,
+              products (
+                id,
+                name,
+                price,
+                sale_price,
+                stock,
+                images,
+                available_for_sale,
+                weight_grams,
+                size,
+                height,
+                width,
+                depth
+              )
+            `,
+          )
+          .eq("cart_id", cartResult.data.id)
+          .order("created_at", {
+            ascending: true,
+          });
 
       if (cartItemsError) {
         throw cartItemsError;
       }
 
-      const formattedItems: CartItem[] = (cartItems ?? []).flatMap((item) => {
-        const product = item.products as CartProduct | CartProduct[] | null;
+      const formattedItems: CartItem[] = (cartItems ?? []).flatMap(
+        (item) => {
+          const product = item.products as
+            | CartProduct
+            | CartProduct[]
+            | null;
 
-        const actualProduct = Array.isArray(product) ? product[0] : product;
+          const actualProduct = Array.isArray(product)
+            ? product[0]
+            : product;
 
-        if (!actualProduct) {
-          return [];
-        }
+          if (!actualProduct) {
+            return [];
+          }
 
-        return [
-          {
-            id: item.id,
-            quantity: item.quantity,
-
-            product: {
-              ...actualProduct,
-
-              price: Number(actualProduct.price),
-
-              sale_price:
-                actualProduct.sale_price == null
-                  ? null
-                  : Number(actualProduct.sale_price),
-
-              stock: actualProduct.stock ?? 0,
-
-              images: Array.isArray(actualProduct.images)
-                ? actualProduct.images
-                : [],
-
-              weight_grams:
-                actualProduct.weight_grams == null
-                  ? null
-                  : Number(actualProduct.weight_grams),
-
-              height:
-                actualProduct.height == null
-                  ? null
-                  : Number(actualProduct.height),
-
-              width:
-                actualProduct.width == null
-                  ? null
-                  : Number(actualProduct.width),
-
-              depth:
-                actualProduct.depth == null
-                  ? null
-                  : Number(actualProduct.depth),
+          return [
+            {
+              id: item.id,
+              quantity: item.quantity,
+              product: {
+                ...actualProduct,
+                price: Number(actualProduct.price),
+                sale_price:
+                  actualProduct.sale_price == null
+                    ? null
+                    : Number(actualProduct.sale_price),
+                stock: actualProduct.stock ?? 0,
+                images: Array.isArray(actualProduct.images)
+                  ? actualProduct.images
+                      .filter(
+                        (image): image is string =>
+                          typeof image === "string" &&
+                          image.trim().length > 0,
+                      )
+                      .map((image) => image.trim())
+                  : [],
+                weight_grams:
+                  actualProduct.weight_grams == null
+                    ? null
+                    : Number(actualProduct.weight_grams),
+                height:
+                  actualProduct.height == null
+                    ? null
+                    : Number(actualProduct.height),
+                width:
+                  actualProduct.width == null
+                    ? null
+                    : Number(actualProduct.width),
+                depth:
+                  actualProduct.depth == null
+                    ? null
+                    : Number(actualProduct.depth),
+              },
             },
-          },
-        ];
-      });
+          ];
+        },
+      );
 
       setItems(formattedItems);
     } catch (error) {
-      console.error("Checkout loading error:", error);
+      setCloudinaryImagesEnabled(false);
 
+      console.error("Checkout loading error:", error);
       Alert.alert("Unable to load checkout", "Please try again.");
     } finally {
       setLoading(false);
@@ -429,12 +459,9 @@ export default function CheckoutScreen() {
       }
 
       const trimmedFullName = fullName.trim();
-
       const trimmedPhone = phone.trim();
       const trimmedAddress = address.trim();
-
       const trimmedPostalCode = postalCode.trim();
-
       const trimmedCity = city.trim();
       const trimmedCountry = country.trim();
 
@@ -475,7 +502,6 @@ export default function CheckoutScreen() {
       console.error("Saving checkout address failed:", error);
 
       Alert.alert("Unable to save address", "Please try again.");
-
       return false;
     }
   }
@@ -502,19 +528,21 @@ export default function CheckoutScreen() {
      */
     const year = preferredFulfillmentAt.getFullYear();
 
-    const month = String(preferredFulfillmentAt.getMonth() + 1).padStart(
-      2,
-      "0",
-    );
+    const month = String(
+      preferredFulfillmentAt.getMonth() + 1,
+    ).padStart(2, "0");
 
-    const day = String(preferredFulfillmentAt.getDate()).padStart(2, "0");
+    const day = String(
+      preferredFulfillmentAt.getDate(),
+    ).padStart(2, "0");
 
-    const hours = String(preferredFulfillmentAt.getHours()).padStart(2, "0");
+    const hours = String(
+      preferredFulfillmentAt.getHours(),
+    ).padStart(2, "0");
 
-    const minutes = String(preferredFulfillmentAt.getMinutes()).padStart(
-      2,
-      "0",
-    );
+    const minutes = String(
+      preferredFulfillmentAt.getMinutes(),
+    ).padStart(2, "0");
 
     return `${year}-${month}-${day}T${hours}:${minutes}`;
   }
@@ -550,68 +578,67 @@ export default function CheckoutScreen() {
         return;
       }
 
-      /* =====================================================
-         ADDRESS VALIDATION
-         ===================================================== */
+      /* Address validation */
 
       const trimmedFullName = fullName.trim();
-
       const trimmedPhone = phone.trim();
-
       const trimmedAddress = address.trim();
-
       const trimmedPostalCode = postalCode.trim();
-
       const trimmedCity = city.trim();
-
       const trimmedCountry = country.trim();
 
       if (!trimmedFullName) {
-        Alert.alert("Full name required", "Please enter your full name.");
-
+        Alert.alert(
+          "Full name required",
+          "Please enter your full name.",
+        );
         return;
       }
 
       if (!trimmedPhone) {
-        Alert.alert("Phone required", "Please enter your phone number.");
-
+        Alert.alert(
+          "Phone required",
+          "Please enter your phone number.",
+        );
         return;
       }
 
       if (!trimmedAddress) {
-        Alert.alert("Address required", "Please enter your address.");
-
+        Alert.alert(
+          "Address required",
+          "Please enter your address.",
+        );
         return;
       }
 
       if (!trimmedCity) {
         Alert.alert("City required", "Please enter your city.");
-
         return;
       }
 
       if (!trimmedPostalCode) {
-        Alert.alert("Postal code required", "Please enter your postal code.");
-
+        Alert.alert(
+          "Postal code required",
+          "Please enter your postal code.",
+        );
         return;
       }
 
       if (!trimmedCountry) {
-        Alert.alert("Country required", "Please enter your country.");
-
+        Alert.alert(
+          "Country required",
+          "Please enter your country.",
+        );
         return;
       }
 
-      /* =====================================================
-         DELIVERY VALIDATION
-         ===================================================== */
+      /* Delivery validation */
 
       if (deliveryMode !== "booked" && deliveryMode !== "requested") {
         Alert.alert(
           "Delivery service required",
           "Please select how the delivery service should be arranged.",
         );
-
         return;
       }
 
@@ -622,20 +649,16 @@ export default function CheckoutScreen() {
           "Delivery details required",
           'Please enter the delivery service details, or select "Request admin to book the delivery service".',
         );
-
         return;
       }
 
-      /* =====================================================
-         PAYMENT VALIDATION
-         ===================================================== */
+      /* Payment validation */
 
       if (!paymentMethodId) {
         Alert.alert(
           "Payment method required",
           "Please select a payment method.",
         );
-
         return;
       }
 
@@ -648,13 +671,10 @@ export default function CheckoutScreen() {
           "Payment method unavailable",
           "Please select an available payment method.",
         );
-
         return;
       }
 
-      /* =====================================================
-         SAVE PROFILE
-         ===================================================== */
+      /* Save profile */
 
       const saved = await saveCheckoutAddress();
 
@@ -662,9 +682,7 @@ export default function CheckoutScreen() {
         return;
       }
 
-      /* =====================================================
-         API
-         ===================================================== */
+      /* API */
 
       if (!WEB_API_URL) {
         throw new Error("Web API URL is not configured.");
@@ -672,13 +690,10 @@ export default function CheckoutScreen() {
 
       const response = await fetch(`${WEB_API_URL}/api/orders`, {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json",
-
           Authorization: `Bearer ${session.access_token}`,
         },
-
         body: JSON.stringify({
           full_name: trimmedFullName,
           phone: trimmedPhone,
@@ -686,13 +701,9 @@ export default function CheckoutScreen() {
           city: trimmedCity,
           postal_code: trimmedPostalCode,
           country: trimmedCountry,
-
           payment_method: paymentMethodId,
-
           preferred_fulfillment_at: getPreferredFulfillmentValue(),
-
           porter_status: deliveryMode,
-
           porter_details: trimmedDeliveryDetails || null,
         }),
       });
@@ -715,16 +726,21 @@ export default function CheckoutScreen() {
       }
 
       if (!response.ok) {
-        throw new Error(result.error || "Unable to place your order.");
+        throw new Error(
+          result.error || "Unable to place your order.",
+        );
       }
 
-      if (!result.success || !result.order_id || !result.order_number) {
+      if (
+        !result.success ||
+        !result.order_id ||
+        !result.order_number
+      ) {
         throw new Error("The order was not created successfully.");
       }
 
       router.replace({
         pathname: "/order-success",
-
         params: {
           order: result.order_number,
         },
@@ -804,7 +820,9 @@ export default function CheckoutScreen() {
             style={styles.primaryButton}
             onPress={() => router.replace("/explore")}
           >
-            <Text style={styles.primaryButtonText}>Continue shopping</Text>
+            <Text style={styles.primaryButtonText}>
+              Continue shopping
+            </Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -819,8 +837,9 @@ export default function CheckoutScreen() {
     return (
       <SafeAreaView style={styles.center}>
         <ActivityIndicator size="large" />
-
-        <Text style={styles.loadingText}>Loading checkout...</Text>
+        <Text style={styles.loadingText}>
+          Loading checkout...
+        </Text>
       </SafeAreaView>
     );
   }
@@ -840,9 +859,7 @@ export default function CheckoutScreen() {
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
         >
-          {/* =================================================
-              HEADER
-          ================================================= */}
+          {/* Header */}
 
           <View style={styles.headerRow}>
             <Pressable onPress={() => router.back()}>
@@ -860,21 +877,20 @@ export default function CheckoutScreen() {
               : "Review your order before placing it."}
           </Text>
 
-          {/* =================================================
-              1. SHIPPING ADDRESS
-          ================================================= */}
+          {/* 1. Shipping address */}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>1. Shipping address</Text>
+            <Text style={styles.sectionTitle}>
+              1. Shipping address
+            </Text>
 
             <View style={styles.card}>
               <Text style={styles.helperText}>
-                Your current delivery details are shown below. You can edit them
-                if needed.
+                Your current delivery details are shown below. You can
+                edit them if needed.
               </Text>
 
               <Text style={styles.inputLabel}>Full name</Text>
-
               <TextInput
                 value={fullName}
                 onChangeText={setFullName}
@@ -884,7 +900,6 @@ export default function CheckoutScreen() {
               />
 
               <Text style={styles.inputLabel}>Phone</Text>
-
               <TextInput
                 value={phone}
                 onChangeText={setPhone}
@@ -895,7 +910,6 @@ export default function CheckoutScreen() {
               />
 
               <Text style={styles.inputLabel}>Address</Text>
-
               <TextInput
                 value={address}
                 onChangeText={setAddress}
@@ -907,7 +921,6 @@ export default function CheckoutScreen() {
               <View style={styles.inputRow}>
                 <View style={styles.postalContainer}>
                   <Text style={styles.inputLabel}>Postal code</Text>
-
                   <TextInput
                     value={postalCode}
                     onChangeText={setPostalCode}
@@ -920,7 +933,6 @@ export default function CheckoutScreen() {
 
                 <View style={styles.cityContainer}>
                   <Text style={styles.inputLabel}>City</Text>
-
                   <TextInput
                     value={city}
                     onChangeText={setCity}
@@ -932,7 +944,6 @@ export default function CheckoutScreen() {
               </View>
 
               <Text style={styles.inputLabel}>Country</Text>
-
               <TextInput
                 value={country}
                 onChangeText={setCountry}
@@ -947,19 +958,22 @@ export default function CheckoutScreen() {
             </View>
           </View>
 
-          {/* =================================================
-              2. PREFERRED FULFILLMENT
-          ================================================= */}
+          {/* 2. Preferred fulfillment */}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>2. Preferred fulfillment</Text>
+            <Text style={styles.sectionTitle}>
+              2. Preferred fulfillment
+            </Text>
 
             <View style={styles.card}>
               <Text style={styles.helperText}>
-                Let us know when you would prefer your order to be fulfilled.
+                Let us know when you would prefer your order to be
+                fulfilled.
               </Text>
 
-              <Text style={styles.inputLabel}>Preferred date and time</Text>
+              <Text style={styles.inputLabel}>
+                Preferred date and time
+              </Text>
 
               <Pressable
                 style={styles.datePickerButton}
@@ -983,7 +997,9 @@ export default function CheckoutScreen() {
                   onPress={() => setPreferredFulfillmentAt(null)}
                   style={styles.clearDateButton}
                 >
-                  <Text style={styles.clearDateText}>Clear preferred time</Text>
+                  <Text style={styles.clearDateText}>
+                    Clear preferred time
+                  </Text>
                 </Pressable>
               )}
 
@@ -999,7 +1015,8 @@ export default function CheckoutScreen() {
                       return;
                     }
 
-                    const current = preferredFulfillmentAt ?? new Date();
+                    const current =
+                      preferredFulfillmentAt ?? new Date();
 
                     const updated = new Date(
                       selectedDate.getFullYear(),
@@ -1012,9 +1029,7 @@ export default function CheckoutScreen() {
                     );
 
                     setPreferredFulfillmentAt(updated);
-
                     setShowFulfillmentDatePicker(false);
-
                     setShowFulfillmentTimePicker(true);
                   }}
                 />
@@ -1032,7 +1047,8 @@ export default function CheckoutScreen() {
                       return;
                     }
 
-                    const current = preferredFulfillmentAt ?? new Date();
+                    const current =
+                      preferredFulfillmentAt ?? new Date();
 
                     const updated = new Date(
                       current.getFullYear(),
@@ -1050,15 +1066,13 @@ export default function CheckoutScreen() {
               )}
 
               <Text style={styles.smallHint}>
-                This is your preferred fulfillment time and is not a guaranteed
-                delivery time.
+                This is your preferred fulfillment time and is not a
+                guaranteed delivery time.
               </Text>
             </View>
           </View>
 
-          {/* =================================================
-              3. YOUR ITEMS
-          ================================================= */}
+          {/* 3. Your items */}
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>3. Your items</Text>
@@ -1072,7 +1086,13 @@ export default function CheckoutScreen() {
 
                 const lineTotal = price * item.quantity;
 
-                const image = item.product.images?.[0] ?? null;
+                const image =
+                  item.product.images.find((imageUrl) =>
+                    canDisplayImage(
+                      imageUrl,
+                      cloudinaryImagesEnabled,
+                    ),
+                  ) ?? null;
 
                 return (
                   <View key={item.id}>
@@ -1080,21 +1100,24 @@ export default function CheckoutScreen() {
                       <View style={styles.summaryImageContainer}>
                         {image ? (
                           <Image
-                            source={{
-                              uri: image,
-                            }}
+                            source={{ uri: image }}
                             style={styles.summaryImage}
                             contentFit="cover"
                           />
                         ) : (
-                          <View style={styles.noImage}>
-                            <Text style={styles.noImageText}>—</Text>
-                          </View>
+                          <Image
+                            source={CLOUDINARY_FALLBACK_IMAGE}
+                            style={styles.summaryImage}
+                            contentFit="contain"
+                          />
                         )}
                       </View>
 
                       <View style={styles.summaryItemInfo}>
-                        <Text style={styles.summaryItemName} numberOfLines={2}>
+                        <Text
+                          style={styles.summaryItemName}
+                          numberOfLines={2}
+                        >
                           {item.product.name}
                         </Text>
 
@@ -1126,12 +1149,12 @@ export default function CheckoutScreen() {
             </View>
           </View>
 
-          {/* =================================================
-              4. DELIVERY SERVICE
-          ================================================= */}
+          {/* 4. Delivery service */}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>4. Delivery service</Text>
+            <Text style={styles.sectionTitle}>
+              4. Delivery service
+            </Text>
 
             <View style={styles.card}>
               <Text style={styles.helperText}>
@@ -1142,7 +1165,8 @@ export default function CheckoutScreen() {
                 onPress={() => setDeliveryMode("booked")}
                 style={[
                   styles.optionCard,
-                  deliveryMode === "booked" && styles.optionCardSelected,
+                  deliveryMode === "booked" &&
+                    styles.optionCardSelected,
                 ]}
               >
                 <View style={styles.radioOuter}>
@@ -1157,8 +1181,8 @@ export default function CheckoutScreen() {
                   </Text>
 
                   <Text style={styles.optionDescription}>
-                    Add the delivery company, contact details, or other delivery
-                    information below.
+                    Add the delivery company, contact details, or other
+                    delivery information below.
                   </Text>
                 </View>
               </Pressable>
@@ -1167,7 +1191,8 @@ export default function CheckoutScreen() {
                 onPress={() => setDeliveryMode("requested")}
                 style={[
                   styles.optionCard,
-                  deliveryMode === "requested" && styles.optionCardSelected,
+                  deliveryMode === "requested" &&
+                    styles.optionCardSelected,
                 ]}
               >
                 <View style={styles.radioOuter}>
@@ -1182,13 +1207,18 @@ export default function CheckoutScreen() {
                   </Text>
 
                   <Text style={styles.optionDescription}>
-                    We will arrange the delivery service for you. Extra delivery
-                    charges may apply.
+                    We will arrange the delivery service for you. Extra
+                    delivery charges may apply.
                   </Text>
                 </View>
               </Pressable>
 
-              <Text style={[styles.inputLabel, styles.deliveryDetailsLabel]}>
+              <Text
+                style={[
+                  styles.inputLabel,
+                  styles.deliveryDetailsLabel,
+                ]}
+              >
                 Delivery details
               </Text>
 
@@ -1210,12 +1240,12 @@ export default function CheckoutScreen() {
             </View>
           </View>
 
-          {/* =================================================
-              5. PAYMENT METHOD
-          ================================================= */}
+          {/* 5. Payment method */}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>5. Payment method</Text>
+            <Text style={styles.sectionTitle}>
+              5. Payment method
+            </Text>
 
             {paymentMethods.length === 0 ? (
               <View style={styles.warningBox}>
@@ -1228,6 +1258,13 @@ export default function CheckoutScreen() {
                 {paymentMethods.map((method) => {
                   const selected = paymentMethodId === method.id;
 
+                  const qrCodeUrl = method.qr_code_url?.trim() ?? "";
+
+                  const showQrCode = canDisplayImage(
+                    qrCodeUrl,
+                    cloudinaryImagesEnabled,
+                  );
+
                   return (
                     <Pressable
                       key={method.id}
@@ -1238,7 +1275,9 @@ export default function CheckoutScreen() {
                       ]}
                     >
                       <View style={styles.paymentRadio}>
-                        {selected && <View style={styles.paymentDot} />}
+                        {selected && (
+                          <View style={styles.paymentDot} />
+                        )}
                       </View>
 
                       <View style={styles.paymentContent}>
@@ -1264,15 +1303,21 @@ export default function CheckoutScreen() {
                           </Text>
                         )}
 
-                        {method.qr_code_url && (
-                          <Image
-                            source={{
-                              uri: method.qr_code_url,
-                            }}
-                            style={styles.paymentQr}
-                            contentFit="contain"
-                          />
-                        )}
+                        {qrCodeUrl ? (
+                          showQrCode ? (
+                            <Image
+                              source={{ uri: qrCodeUrl }}
+                              style={styles.paymentQr}
+                              contentFit="contain"
+                            />
+                          ) : (
+                            <Text style={styles.paymentInstructions}>
+                              The payment QR code is temporarily
+                              unavailable. You can still place your
+                              order and contact us for payment details.
+                            </Text>
+                          )
+                        ) : null}
                       </View>
                     </Pressable>
                   );
@@ -1281,21 +1326,23 @@ export default function CheckoutScreen() {
             )}
           </View>
 
-          {/* =================================================
-              6. ORDER SUMMARY
-          ================================================= */}
+          {/* 6. Order summary */}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>6. Order summary</Text>
+            <Text style={styles.sectionTitle}>
+              6. Order summary
+            </Text>
 
             <View style={styles.card}>
               {catalogMode ? (
                 <View style={styles.catalogPriceBox}>
-                  <Text style={styles.catalogPriceTitle}>Price details</Text>
+                  <Text style={styles.catalogPriceTitle}>
+                    Price details
+                  </Text>
 
                   <Text style={styles.catalogPriceText}>
-                    We will contact you after your order with the price and
-                    shipping details.
+                    We will contact you after your order with the price
+                    and shipping details.
                   </Text>
                 </View>
               ) : (
@@ -1339,9 +1386,7 @@ export default function CheckoutScreen() {
             </View>
           </View>
 
-          {/* =================================================
-              PLACE ORDER
-          ================================================= */}
+          {/* Place order */}
 
           <Pressable
             style={[
@@ -1355,7 +1400,9 @@ export default function CheckoutScreen() {
               <View style={styles.placeOrderLoading}>
                 <ActivityIndicator size="small" color="#fff" />
 
-                <Text style={styles.placeOrderText}>Placing order...</Text>
+                <Text style={styles.placeOrderText}>
+                  Placing order...
+                </Text>
               </View>
             ) : (
               <Text style={styles.placeOrderText}>Place order</Text>
@@ -1364,7 +1411,8 @@ export default function CheckoutScreen() {
 
           {!addressComplete && (
             <Text style={styles.requiredNote}>
-              Please complete your shipping address before placing the order.
+              Please complete your shipping address before placing the
+              order.
             </Text>
           )}
 
@@ -1381,7 +1429,8 @@ export default function CheckoutScreen() {
           )}
 
           <Text style={styles.secureNote}>
-            Your order will be processed using the details selected above.
+            Your order will be processed using the details selected
+            above.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -1422,9 +1471,7 @@ const styles = StyleSheet.create({
     paddingBottom: 50,
   },
 
-  /* =======================================================
-     HEADER
-     ======================================================= */
+  /* Header */
 
   headerRow: {
     minHeight: 48,
@@ -1457,9 +1504,7 @@ const styles = StyleSheet.create({
     color: "#777",
   },
 
-  /* =======================================================
-     SECTIONS
-     ======================================================= */
+  /* Sections */
 
   section: {
     marginTop: 22,
@@ -1494,9 +1539,7 @@ const styles = StyleSheet.create({
     color: "#888",
   },
 
-  /* =======================================================
-     INPUTS
-     ======================================================= */
+  /* Inputs */
 
   inputLabel: {
     marginBottom: 6,
@@ -1542,9 +1585,7 @@ const styles = StyleSheet.create({
     color: "#888",
   },
 
-  /* =======================================================
-     DATE
-     ======================================================= */
+  /* Date */
 
   datePickerButton: {
     minHeight: 46,
@@ -1590,9 +1631,7 @@ const styles = StyleSheet.create({
     color: "#8c672d",
   },
 
-  /* =======================================================
-     ITEMS
-     ======================================================= */
+  /* Items */
 
   summaryItem: {
     flexDirection: "row",
@@ -1660,9 +1699,7 @@ const styles = StyleSheet.create({
     color: "#222",
   },
 
-  /* =======================================================
-     DELIVERY
-     ======================================================= */
+  /* Delivery */
 
   optionCard: {
     flexDirection: "row",
@@ -1721,9 +1758,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 
-  /* =======================================================
-     PAYMENT
-     ======================================================= */
+  /* Payment */
 
   paymentList: {
     gap: 10,
@@ -1807,9 +1842,7 @@ const styles = StyleSheet.create({
     color: "#9b3028",
   },
 
-  /* =======================================================
-     TOTALS
-     ======================================================= */
+  /* Totals */
 
   catalogPriceBox: {
     borderRadius: 10,
@@ -1885,9 +1918,7 @@ const styles = StyleSheet.create({
     color: "#222",
   },
 
-  /* =======================================================
-     PLACE ORDER
-     ======================================================= */
+  /* Place order */
 
   placeOrderButton: {
     marginTop: 28,
@@ -1928,9 +1959,7 @@ const styles = StyleSheet.create({
     color: "#888",
   },
 
-  /* =======================================================
-     EMPTY
-     ======================================================= */
+  /* Empty */
 
   emptyContainer: {
     flex: 1,

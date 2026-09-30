@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { STORE } from "@/constants/store";
+import { STORE, CLOUDINARY_FALLBACK_IMAGE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 type Category = {
@@ -28,8 +28,9 @@ export default function AdminCategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] = useState(false);
   const loadCategories = useCallback(async () => {
+    setCloudinaryImagesEnabled(false);
     try {
       const {
         data: { user },
@@ -51,18 +52,43 @@ export default function AdminCategoriesPage() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("categories")
-        .select("id, name, slug, image_url, is_active")
-        .order("name");
+      const [categoriesResult, siteSettingsResult] = await Promise.all([
+        supabase
+          .from("categories")
+          .select("id, name, slug, image_url, is_active")
+          .order("name"),
 
-      if (error) {
-        console.log("Unable to load categories:", error.message);
+        supabase
+          .from("site_settings")
+          .select("cloudinary_images_enabled")
+          .eq("id", true)
+          .maybeSingle(),
+      ]);
+
+      if (siteSettingsResult.error) {
+        console.log(
+          "Unable to load Cloudinary setting:",
+          siteSettingsResult.error.message,
+        );
+
+        setCloudinaryImagesEnabled(false);
+      } else {
+        setCloudinaryImagesEnabled(
+          siteSettingsResult.data?.cloudinary_images_enabled === true,
+        );
+      }
+
+      if (categoriesResult.error) {
+        console.log(
+          "Unable to load categories:",
+          categoriesResult.error.message,
+        );
         return;
       }
 
-      setCategories((data ?? []) as Category[]);
+      setCategories((categoriesResult.data ?? []) as Category[]);
     } catch (error) {
+      setCloudinaryImagesEnabled(false);
       console.log("Admin categories error:", error);
     } finally {
       setLoading(false);
@@ -82,46 +108,29 @@ export default function AdminCategoriesPage() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
-       
-
         <View style={styles.loadingContainer}>
-          <ActivityIndicator
-            size="large"
-            color={STORE.colors.primary}
-          />
+          <ActivityIndicator size="large" color={STORE.colors.primary} />
 
-          <Text style={styles.loadingText}>
-            Loading categories...
-          </Text>
+          <Text style={styles.loadingText}>Loading categories...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView
-      style={styles.safeArea}
-      edges={[ "bottom"]}
-    >
-     
-
+    <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
       >
         {/* PAGE HEADER */}
 
         <View style={styles.pageHeader}>
           <View style={styles.headerText}>
-            <Text style={styles.title}>
-              Categories
-            </Text>
+            <Text style={styles.title}>Categories</Text>
 
             <Text style={styles.subtitle}>
               Manage the categories used in your shop.
@@ -130,13 +139,9 @@ export default function AdminCategoriesPage() {
 
           <Pressable
             style={styles.addButton}
-            onPress={() =>
-              router.push("/admin/categories/new")
-            }
+            onPress={() => router.push("/admin/categories/new")}
           >
-            <Text style={styles.addButtonText}>
-              + New
-            </Text>
+            <Text style={styles.addButtonText}>+ New</Text>
           </Pressable>
         </View>
 
@@ -145,62 +150,56 @@ export default function AdminCategoriesPage() {
         <View style={styles.countRow}>
           <Text style={styles.countText}>
             {categories.length}{" "}
-            {categories.length === 1
-              ? "category"
-              : "categories"}
+            {categories.length === 1 ? "category" : "categories"}
           </Text>
 
-          <Text style={styles.countHint}>
-            Pull down to refresh
-          </Text>
+          <Text style={styles.countHint}>Pull down to refresh</Text>
         </View>
 
         {/* CATEGORIES */}
 
         {categories.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyIcon}>
-              🏷️
-            </Text>
+            <Text style={styles.emptyIcon}>🏷️</Text>
 
-            <Text style={styles.emptyTitle}>
-              No categories yet
-            </Text>
+            <Text style={styles.emptyTitle}>No categories yet</Text>
 
             <Text style={styles.emptyText}>
-              Add your first category to organize your
-              products.
+              Add your first category to organize your products.
             </Text>
 
             <Pressable
               style={styles.emptyButton}
-              onPress={() =>
-                router.push("/admin/categories/new")
-              }
+              onPress={() => router.push("/admin/categories/new")}
             >
-              <Text style={styles.emptyButtonText}>
-                + Add Category
-              </Text>
+              <Text style={styles.emptyButtonText}>+ Add Category</Text>
             </Pressable>
           </View>
         ) : (
           <View style={styles.categoryList}>
             {categories.map((category) => {
-              const active =
-                category.is_active === true;
+              const active = category.is_active === true;
+              const isCloudinaryImage =
+                category.image_url
+                  ?.toLowerCase()
+                  .includes("res.cloudinary.com") === true;
+
+              const categoryImage =
+                category.image_url &&
+                (!isCloudinaryImage || cloudinaryImagesEnabled)
+                  ? { uri: category.image_url }
+                  : CLOUDINARY_FALLBACK_IMAGE;
 
               return (
                 <Pressable
                   key={category.id}
                   style={({ pressed }) => [
                     styles.categoryCard,
-                    pressed &&
-                      styles.categoryCardPressed,
+                    pressed && styles.categoryCardPressed,
                   ]}
                   onPress={() =>
                     router.push({
-                      pathname:
-                        "/admin/categories/[id]/edit",
+                      pathname: "/admin/categories/[id]/edit",
                       params: {
                         id: category.id,
                       },
@@ -210,37 +209,25 @@ export default function AdminCategoriesPage() {
                   {/* CATEGORY IMAGE */}
 
                   <View style={styles.categoryImageContainer}>
-                    {category.image_url ? (
-                      <Image
-                        source={{
-                          uri: category.image_url,
-                        }}
-                        style={styles.categoryImage}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View style={styles.noImage}>
-                        <Text style={styles.noImageText}>
-                          🏷️
-                        </Text>
-                      </View>
-                    )}
+                    <Image
+                      source={categoryImage}
+                      style={styles.categoryImage}
+                      resizeMode={
+                        isCloudinaryImage && !cloudinaryImagesEnabled
+                          ? "contain"
+                          : "cover"
+                      }
+                    />
                   </View>
 
                   {/* CATEGORY DETAILS */}
 
                   <View style={styles.categoryMain}>
-                    <Text
-                      style={styles.categoryName}
-                      numberOfLines={1}
-                    >
+                    <Text style={styles.categoryName} numberOfLines={1}>
                       {category.name}
                     </Text>
 
-                    <Text
-                      style={styles.categorySlug}
-                      numberOfLines={1}
-                    >
+                    <Text style={styles.categorySlug} numberOfLines={1}>
                       /{category.slug}
                     </Text>
 
@@ -248,22 +235,16 @@ export default function AdminCategoriesPage() {
                       <View
                         style={[
                           styles.statusBadge,
-                          active
-                            ? styles.activeBadge
-                            : styles.inactiveBadge,
+                          active ? styles.activeBadge : styles.inactiveBadge,
                         ]}
                       >
                         <Text
                           style={[
                             styles.statusText,
-                            active
-                              ? styles.activeText
-                              : styles.inactiveText,
+                            active ? styles.activeText : styles.inactiveText,
                           ]}
                         >
-                          {active
-                            ? "Active"
-                            : "Inactive"}
+                          {active ? "Active" : "Inactive"}
                         </Text>
                       </View>
                     </View>
@@ -271,9 +252,7 @@ export default function AdminCategoriesPage() {
 
                   {/* ARROW */}
 
-                  <Text style={styles.arrow}>
-                    ›
-                  </Text>
+                  <Text style={styles.arrow}>›</Text>
                 </Pressable>
               );
             })}

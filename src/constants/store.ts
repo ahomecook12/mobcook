@@ -14,3 +14,5 @@ export const STORE = {
 export const STORE_LOCALE = "en-IN";
 
 export const CURRENCY_SYMBOL = "₹";
+
+export const CLOUDINARY_FALLBACK_IMAGE = require("../../assets/images/ak.png");

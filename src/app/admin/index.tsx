@@ -36,18 +36,14 @@ export default function AdminDashboard() {
         return;
       }
 
-      const { data: profile, error: profileError } =
-        await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .maybeSingle();
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
 
       if (profileError) {
-        console.log(
-          "Unable to load admin profile:",
-          profileError.message,
-        );
+        console.log("Unable to load admin profile:", profileError.message);
 
         router.replace("/");
         return;
@@ -69,19 +65,11 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <SafeAreaView
-        style={styles.safeArea}
-        edges={["bottom"]}
-      >
+      <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator
-            size="large"
-            color={STORE.colors.primary}
-          />
+          <ActivityIndicator size="large" color={STORE.colors.primary} />
 
-          <Text style={styles.loadingText}>
-            Loading admin dashboard...
-          </Text>
+          <Text style={styles.loadingText}>Loading admin dashboard...</Text>
         </View>
       </SafeAreaView>
     );
@@ -92,10 +80,7 @@ export default function AdminDashboard() {
   }
 
   return (
-    <SafeAreaView
-      style={styles.safeArea}
-      edges={["bottom"]}
-    >
+    <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -158,14 +143,34 @@ export default function AdminDashboard() {
 
           <Text style={styles.arrow}>›</Text>
         </Pressable>
+        {/* ================================================= */}
+        {/* CLOUDINARY */}
+        {/* ================================================= */}
 
+        <Pressable
+          style={[styles.mainCard, { marginTop: 12 }]}
+          onPress={() => router.push("/admin/cloudinary")}
+        >
+          <View style={styles.cardIcon}>
+            <Text style={styles.cardIconText}>☁️</Text>
+          </View>
+
+          <View style={styles.cardContent}>
+            <Text style={styles.cardTitle}>Cloudinary</Text>
+
+            <Text style={styles.cardDescription}>
+              Monitor image usage and enable or disable Cloudinary image
+              delivery.
+            </Text>
+          </View>
+
+          <Text style={styles.arrow}>›</Text>
+        </Pressable>
         {/* ================================================= */}
         {/* SHOP MANAGEMENT */}
         {/* ================================================= */}
 
-        <Text style={styles.sectionTitle}>
-          Shop management
-        </Text>
+        <Text style={styles.sectionTitle}>Shop management</Text>
 
         {/* CATEGORIES */}
 
@@ -192,10 +197,7 @@ export default function AdminDashboard() {
         {/* SHOPFRONT SETTINGS */}
 
         <Pressable
-          style={[
-            styles.mainCard,
-            { marginTop: 12 },
-          ]}
+          style={[styles.mainCard, { marginTop: 12 }]}
           onPress={() => router.push("/admin/shopsettings")}
         >
           <View style={styles.cardIcon}>
@@ -203,9 +205,7 @@ export default function AdminDashboard() {
           </View>
 
           <View style={styles.cardContent}>
-            <Text style={styles.cardTitle}>
-              Shopfront settings
-            </Text>
+            <Text style={styles.cardTitle}>Shopfront settings</Text>
 
             <Text style={styles.cardDescription}>
               Manage your homepage hero, product sections, social links and

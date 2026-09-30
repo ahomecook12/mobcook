@@ -1,24 +1,25 @@
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+
+import { useCallback, useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { STORE } from "@/constants/store";
+import { CLOUDINARY_FALLBACK_IMAGE, STORE } from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 type Category = {
@@ -49,6 +50,14 @@ export default function EditCategoryScreen() {
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deletingImage, setDeletingImage] = useState(false);
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] = useState(false);
+
+  const [cloudinarySettingsLoading, setCloudinarySettingsLoading] =
+    useState(true);
+
+  const [cloudinarySettingsError, setCloudinarySettingsError] = useState<
+    string | null
+  >(null);
 
   // -------------------------------------------------------
   // FORM
@@ -169,7 +178,81 @@ export default function EditCategoryScreen() {
       setLoading(false);
     }
   }
+  // -------------------------------------------------------
+  // CLOUDINARY PROTECTION
+  // -------------------------------------------------------
 
+  const refreshCloudinarySetting = useCallback(async () => {
+    setCloudinarySettingsLoading(true);
+    setCloudinarySettingsError(null);
+    setCloudinaryImagesEnabled(false);
+
+    try {
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("cloudinary_images_enabled")
+        .eq("id", true)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data || typeof data.cloudinary_images_enabled !== "boolean") {
+        throw new Error("Cloudinary status is unavailable.");
+      }
+
+      const enabled = data.cloudinary_images_enabled === true;
+
+      setCloudinaryImagesEnabled(enabled);
+
+      return enabled;
+    } catch (error) {
+      setCloudinaryImagesEnabled(false);
+
+      setCloudinarySettingsError(
+        "Unable to check Cloudinary status. Image uploads are blocked until the status can be verified.",
+      );
+
+      throw error;
+    } finally {
+      setCloudinarySettingsLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshCloudinarySetting().catch((error) => {
+        console.error("Cloudinary settings loading error:", error);
+      });
+    }, [refreshCloudinarySetting]),
+  );
+
+  async function ensureCloudinaryUploadAllowed() {
+    try {
+      const enabled = await refreshCloudinarySetting();
+
+      if (!enabled) {
+        Alert.alert(
+          "Cloudinary is full",
+          "Cloudinary is full. Image upload is not allowed.",
+        );
+
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Cloudinary upload status check failed:", error);
+
+      Alert.alert(
+        "Upload unavailable",
+        "Unable to verify Cloudinary status. Image upload is not allowed right now. Please try again.",
+      );
+
+      return false;
+    }
+  }
   // -------------------------------------------------------
   // CLOUDINARY DELETE
   // -------------------------------------------------------
@@ -204,6 +287,10 @@ export default function EditCategoryScreen() {
 
   async function pickAndUploadImage() {
     try {
+      // Check before opening the image picker.
+      if (!(await ensureCloudinaryUploadAllowed())) {
+        return;
+      }
       const permission =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -261,6 +348,12 @@ export default function EditCategoryScreen() {
 
       formData.append("file", file);
       formData.append("folder", "category");
+
+      // Recheck immediately before uploading in case
+      // Cloudinary was disabled while the image was being selected.
+      if (!(await ensureCloudinaryUploadAllowed())) {
+        return;
+      }
 
       const response = await fetch(
         `${process.env.EXPO_PUBLIC_WEB_API_URL}/api/upload`,
@@ -698,7 +791,11 @@ export default function EditCategoryScreen() {
       setDeleting(false);
     }
   }
+  const isCloudinaryPreview =
+    imagePreview?.toLowerCase().includes("res.cloudinary.com") === true;
 
+  const canShowImagePreview =
+    !!imagePreview && (!isCloudinaryPreview || cloudinaryImagesEnabled);
   // -------------------------------------------------------
   // LOADING
   // -------------------------------------------------------
@@ -824,9 +921,13 @@ export default function EditCategoryScreen() {
             {imagePreview ? (
               <View style={styles.imageContainer}>
                 <Image
-                  source={{ uri: imagePreview }}
+                  source={
+                    canShowImagePreview
+                      ? { uri: imagePreview }
+                      : CLOUDINARY_FALLBACK_IMAGE
+                  }
                   style={styles.categoryImage}
-                  resizeMode="cover"
+                  resizeMode={canShowImagePreview ? "cover" : "contain"}
                 />
               </View>
             ) : (

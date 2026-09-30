@@ -1,8 +1,14 @@
 import { File } from "expo-file-system";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,7 +24,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
+import {
+  CLOUDINARY_FALLBACK_IMAGE,
+  CURRENCY_SYMBOL,
+  STORE,
+} from "@/constants/store";
 import { supabase } from "@/lib/supabase";
 
 export type ProductDisplaySettings = {
@@ -55,6 +65,7 @@ export type Product = {
   depth: number | null;
   images: string[] | null;
   video_urls: string[] | null;
+  youtube_post_urls: string[] | null;
   active: boolean | null;
   available_for_sale: boolean;
   display_settings: ProductDisplaySettings | null;
@@ -75,6 +86,10 @@ type Props = {
 
 function inputValue(value: number | null | undefined) {
   return value == null ? "" : String(value);
+}
+
+function isCloudinaryImage(url: string) {
+  return url.toLowerCase().includes("res.cloudinary.com");
 }
 
 export default function ProductForm({
@@ -118,6 +133,18 @@ export default function ProductForm({
 
   const [images, setImages] = useState<string[]>(product?.images ?? []);
 
+  const [uploading, setUploading] = useState(false);
+  const uploadInProgress = useRef(false);
+
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] = useState(false);
+
+  const [cloudinarySettingsLoading, setCloudinarySettingsLoading] =
+    useState(true);
+
+  const [cloudinarySettingsError, setCloudinarySettingsError] = useState<
+    string | null
+  >(null);
+
   // -------------------------------------------------------
   // VIDEOS
   // -------------------------------------------------------
@@ -127,6 +154,12 @@ export default function ProductForm({
   );
 
   const [videoUrl, setVideoUrl] = useState("");
+
+  const [youtubePostUrls, setYoutubePostUrls] = useState<string[]>(
+    product?.youtube_post_urls ?? [],
+  );
+
+  const [youtubePostUrl, setYoutubePostUrl] = useState("");
 
   // -------------------------------------------------------
   // CATEGORIES
@@ -146,7 +179,7 @@ export default function ProductForm({
   const [active, setActive] = useState(product?.active ?? true);
 
   const [availableForSale, setAvailableForSale] = useState(
-    product?.available_for_sale ?? true,
+    product?.available_for_sale ?? false,
   );
 
   const [displaySettings, setDisplaySettings] =
@@ -164,6 +197,7 @@ export default function ProductForm({
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [aiImageUri, setAiImageUri] = useState<string | null>(null);
+
   // -------------------------------------------------------
   // KEEP CATEGORY STATE IN SYNC
   // -------------------------------------------------------
@@ -173,11 +207,100 @@ export default function ProductForm({
   }, [categories]);
 
   // -------------------------------------------------------
+  // CLOUDINARY PROTECTION
+  // -------------------------------------------------------
+
+  const refreshCloudinarySetting = useCallback(async () => {
+    setCloudinarySettingsLoading(true);
+    setCloudinarySettingsError(null);
+    setCloudinaryImagesEnabled(false);
+
+    try {
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("cloudinary_images_enabled")
+        .eq("id", true)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data || typeof data.cloudinary_images_enabled !== "boolean") {
+        throw new Error("Cloudinary status is unavailable.");
+      }
+
+      const enabled = data.cloudinary_images_enabled === true;
+
+      setCloudinaryImagesEnabled(enabled);
+
+      return enabled;
+    } catch (error) {
+      setCloudinaryImagesEnabled(false);
+      setCloudinarySettingsError(
+        "Unable to check Cloudinary status. Image uploads are blocked until the status can be verified.",
+      );
+
+      throw error;
+    } finally {
+      setCloudinarySettingsLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshCloudinarySetting().catch((error) => {
+        console.error("Cloudinary settings loading error:", error);
+      });
+    }, [refreshCloudinarySetting]),
+  );
+
+  async function ensureCloudinaryUploadAllowed() {
+    try {
+      const enabled = await refreshCloudinarySetting();
+
+      if (!enabled) {
+        Alert.alert(
+          "Cloudinary is full",
+          "Cloudinary is full. Image upload is not allowed. YouTube links can still be added normally.",
+        );
+
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Cloudinary upload status check failed:", error);
+
+      Alert.alert(
+        "Upload unavailable",
+        "Unable to verify Cloudinary status. Image upload is not allowed right now. Please try again.",
+      );
+
+      return false;
+    }
+  }
+
+  // -------------------------------------------------------
   // IMAGE PICK + UPLOAD
   // -------------------------------------------------------
 
   async function pickAndUploadImage() {
+    if (uploadInProgress.current || saving || deleting || aiAnalyzing) {
+      return;
+    }
+
+    uploadInProgress.current = true;
+    setUploading(true);
+
+    let uploadedCount = 0;
+
     try {
+      // Check before opening the image picker.
+      if (!(await ensureCloudinaryUploadAllowed())) {
+        return;
+      }
+
       const permission =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -198,6 +321,7 @@ export default function ProductForm({
       if (result.canceled || !result.assets.length) {
         return;
       }
+
       setAiImageUri(result.assets[0].uri);
 
       const {
@@ -215,14 +339,13 @@ export default function ProductForm({
       }
 
       for (const asset of result.assets) {
-        const fileName = asset.fileName ?? `product-${Date.now()}.jpg`;
-
-        const mimeType = asset.mimeType ?? "image/jpeg";
-
-        console.log("Uploading image:", fileName, mimeType, asset.uri);
+        // Recheck before every upload in case protection was
+        // enabled while selecting images or during this batch.
+        if (!(await ensureCloudinaryUploadAllowed())) {
+          return;
+        }
 
         const formData = new FormData();
-
         const file = new File(asset.uri);
 
         formData.append("file", file);
@@ -245,28 +368,51 @@ export default function ProductForm({
           throw new Error(data?.error ?? "Image upload failed.");
         }
 
-        if (data?.url) {
-          setImages((current) => [...current, data.url]);
+        if (typeof data?.url !== "string" || !data.url.trim()) {
+          throw new Error("The upload server did not return an image URL.");
         }
+
+        const uploadedUrl = data.url.trim();
+
+        setImages((current) => [...current, uploadedUrl]);
+        uploadedCount += 1;
       }
 
       Alert.alert(
         "Upload successful",
-        `${result.assets.length} image${
-          result.assets.length === 1 ? "" : "s"
+        `${uploadedCount} image${
+          uploadedCount === 1 ? "" : "s"
         } uploaded successfully.`,
       );
     } catch (error) {
       console.error("Product image upload error:", error);
 
+      const message =
+        error instanceof Error ? error.message : "Could not upload the image.";
+
       Alert.alert(
         "Image upload failed",
-        error instanceof Error ? error.message : "Could not upload the image.",
+        uploadedCount > 0
+          ? `${uploadedCount} image${
+              uploadedCount === 1 ? " was" : "s were"
+            } uploaded before the error.\n\n${message}`
+          : message,
       );
+    } finally {
+      uploadInProgress.current = false;
+      setUploading(false);
     }
   }
 
+  // -------------------------------------------------------
+  // AI PRODUCT ANALYSIS
+  // -------------------------------------------------------
+
   async function analyzeProductWithAI() {
+    if (aiAnalyzing || uploading || saving || deleting) {
+      return;
+    }
+
     if (!aiImageUri) {
       Alert.alert(
         "AI Product Analysis",
@@ -292,10 +438,7 @@ export default function ProductForm({
         return;
       }
 
-      console.log("AI image URI:", aiImageUri);
-
       const file = new File(aiImageUri);
-
       const base64 = await file.base64();
 
       if (!base64) {
@@ -378,6 +521,7 @@ export default function ProductForm({
       setAiAnalyzing(false);
     }
   }
+
   // -------------------------------------------------------
   // DELETE CLOUDINARY IMAGE
   // -------------------------------------------------------
@@ -391,9 +535,7 @@ export default function ProductForm({
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({
-          url,
-        }),
+        body: JSON.stringify({ url }),
       },
     );
 
@@ -411,6 +553,10 @@ export default function ProductForm({
   // -------------------------------------------------------
 
   async function removeImage(index: number) {
+    if (uploading || saving || deleting) {
+      return;
+    }
+
     const url = images[index];
 
     if (!url) {
@@ -467,7 +613,7 @@ export default function ProductForm({
   }
 
   // -------------------------------------------------------
-  // VIDEO
+  // VIDEO — INDEPENDENT OF CLOUDINARY IMAGE PROTECTION
   // -------------------------------------------------------
 
   function addVideo() {
@@ -493,6 +639,28 @@ export default function ProductForm({
     );
   }
 
+  function addYoutubePost() {
+    const url = youtubePostUrl.trim();
+
+    if (!url) {
+      Alert.alert("YouTube Post", "Please enter a YouTube post URL.");
+      return;
+    }
+
+    if (youtubePostUrls.includes(url)) {
+      Alert.alert("YouTube Post", "This YouTube post has already been added.");
+      return;
+    }
+
+    setYoutubePostUrls((current) => [...current, url]);
+    setYoutubePostUrl("");
+  }
+
+  function removeYoutubePost(index: number) {
+    setYoutubePostUrls((current) =>
+      current.filter((_, postIndex) => postIndex !== index),
+    );
+  }
   // -------------------------------------------------------
   // CATEGORY
   // -------------------------------------------------------
@@ -566,7 +734,6 @@ export default function ProductForm({
       );
 
       setCategoryIds((current) => [...current, newCategory.id]);
-
       setNewCategoryName("");
     } catch (error) {
       Alert.alert(
@@ -583,6 +750,10 @@ export default function ProductForm({
   // -------------------------------------------------------
 
   async function saveProduct() {
+    if (saving || deleting || uploading) {
+      return;
+    }
+
     if (!name.trim()) {
       Alert.alert("Product", "Please enter a product name.");
       return;
@@ -593,10 +764,13 @@ export default function ProductForm({
       return;
     }
 
-    if (!images.length) {
-      Alert.alert("Product", "Please add at least one product image.");
-      return;
-    }
+    // if (!images.length) {
+    //   Alert.alert(
+    //     "Product",
+    //     "Please add at least one product image.",
+    //   );
+    //   return;
+    // }
 
     if (salePrice && Number(salePrice) >= Number(price)) {
       Alert.alert(
@@ -613,36 +787,26 @@ export default function ProductForm({
         name: name.trim(),
         description: description.trim() || null,
         size: size.trim() || null,
-
         price: Number(price),
-
         sale_price: salePrice ? Number(salePrice) : null,
-
         stock: stock ? Number(stock) : 0,
-
         weight_grams: weight ? Number(weight) : null,
-
         height: height ? Number(height) : null,
-
         width: width ? Number(width) : null,
-
         depth: depth ? Number(depth) : null,
 
+        // Save original URLs, never the fallback image.
         images,
 
         video_urls: videoUrls,
-
+        youtube_post_urls: youtubePostUrls,
         active,
-
         available_for_sale: availableForSale,
-
         display_settings: displaySettings,
-
         keywords: keywords
           .split(",")
           .map((keyword) => keyword.trim().toLowerCase())
           .filter(Boolean),
-
         sticker: sticker.trim() || null,
       };
 
@@ -728,7 +892,7 @@ export default function ProductForm({
   // -------------------------------------------------------
 
   function confirmDelete() {
-    if (!product) {
+    if (!product || uploading || saving || deleting) {
       return;
     }
 
@@ -840,6 +1004,8 @@ export default function ProductForm({
   // UI
   // -------------------------------------------------------
 
+  const imageActionBusy = uploading || saving || deleting || aiAnalyzing;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
       <KeyboardAvoidingView
@@ -857,6 +1023,7 @@ export default function ProductForm({
             <Pressable
               onPress={() => router.replace("/admin/products")}
               style={styles.backButton}
+              disabled={uploading || saving || deleting}
             >
               <Text style={styles.backText}>‹ Products</Text>
             </Pressable>
@@ -876,10 +1043,10 @@ export default function ProductForm({
 
           <Section title="Basic Information">
             <Field
-              label="Product Name"
+              label="🔴 Product Name"
               value={name}
               onChangeText={setName}
-              placeholder="e.g. Pearl Jhumka Earrings"
+              placeholder="e.g. Masala Dosa"
             />
 
             <Field
@@ -894,10 +1061,10 @@ export default function ProductForm({
             </Text>
 
             <Field
-              label="Size"
+              label="Quantity"
               value={size}
               onChangeText={setSize}
-              placeholder="e.g. S, M, L or 20 × 30 cm"
+              placeholder="e.g. 2 No.s"
             />
 
             <Field
@@ -912,7 +1079,7 @@ export default function ProductForm({
               label="Keywords"
               value={keywords}
               onChangeText={setKeywords}
-              placeholder="yellow, jhumka, jewellery, gift"
+              placeholder="eg: spicy, vegitarian, festival special.."
             />
 
             <Text style={styles.helper}>Separate keywords with commas.</Text>
@@ -921,22 +1088,67 @@ export default function ProductForm({
           {/* IMAGES */}
 
           <Section title="Product Images">
+            {cloudinarySettingsLoading ? (
+              <View style={styles.cloudinaryNotice}>
+                <View style={styles.aiButtonContent}>
+                  <ActivityIndicator size="small" color="#6d5630" />
+                  <Text style={styles.cloudinaryNoticeText}>
+                    Checking Cloudinary status...
+                  </Text>
+                </View>
+              </View>
+            ) : cloudinarySettingsError ? (
+              <View style={styles.cloudinaryNotice}>
+                <Text style={styles.cloudinaryNoticeText}>
+                  {cloudinarySettingsError}
+                </Text>
+
+                <Pressable
+                  style={styles.refreshStatusButton}
+                  disabled={imageActionBusy}
+                  onPress={() => {
+                    void refreshCloudinarySetting().catch((error) => {
+                      console.error("Cloudinary status refresh failed:", error);
+                    });
+                  }}
+                >
+                  <Text style={styles.secondaryButtonText}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : !cloudinaryImagesEnabled ? (
+              <View style={styles.cloudinaryNotice}>
+                <Text style={styles.cloudinaryNoticeText}>
+                  Cloudinary images are disabled. Image uploads are not allowed.
+                  YouTube links can still be added normally.
+                </Text>
+              </View>
+            ) : null}
+
             <Pressable
-              style={styles.secondaryButton}
+              style={[
+                styles.secondaryButton,
+                imageActionBusy && styles.disabledButton,
+              ]}
               onPress={pickAndUploadImage}
+              disabled={imageActionBusy}
             >
-              <Text style={styles.secondaryButtonText}>+ Choose Images</Text>
+              {uploading ? (
+                <View style={styles.aiButtonContent}>
+                  <ActivityIndicator size="small" color="#6d5630" />
+                  <Text style={styles.secondaryButtonText}>Uploading...</Text>
+                </View>
+              ) : (
+                <Text style={styles.secondaryButtonText}>+ Choose Images</Text>
+              )}
             </Pressable>
 
             <Pressable
               style={[
                 styles.secondaryButton,
-                aiAnalyzing && styles.disabledButton,
+                (imageActionBusy || !aiImageUri) && styles.disabledButton,
               ]}
               onPress={analyzeProductWithAI}
-              disabled={
-                aiAnalyzing || saving || deleting || images.length === 0
-              }
+              disabled={imageActionBusy || !aiImageUri}
             >
               {aiAnalyzing ? (
                 <View style={styles.aiButtonContent}>
@@ -959,33 +1171,57 @@ export default function ProductForm({
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.imagePreviewRow}
               >
-                {images.map((url, index) => (
-                  <View key={`${url}-${index}`} style={styles.imagePreviewCard}>
-                    <Image
-                      source={{ uri: url }}
-                      style={styles.productImage}
-                      contentFit="cover"
-                      transition={150}
-                    />
+                {images.map((url, index) => {
+                  const imageUrl = url.trim();
 
-                    <View style={styles.imageNumberBadge}>
-                      <Text style={styles.imageNumberText}>{index + 1}</Text>
-                    </View>
+                  const showImage =
+                    Boolean(imageUrl) &&
+                    (!isCloudinaryImage(imageUrl) || cloudinaryImagesEnabled);
 
-                    <Pressable
-                      onPress={() => removeImage(index)}
-                      style={styles.imageRemoveButton}
+                  return (
+                    <View
+                      key={`${url}-${index}`}
+                      style={styles.imagePreviewCard}
                     >
-                      <Text style={styles.imageRemoveText}>Remove</Text>
-                    </Pressable>
-                  </View>
-                ))}
+                      {showImage ? (
+                        <Image
+                          source={{ uri: imageUrl }}
+                          style={styles.productImage}
+                          contentFit="cover"
+                          transition={150}
+                        />
+                      ) : (
+                        <Image
+                          source={CLOUDINARY_FALLBACK_IMAGE}
+                          style={styles.productImage}
+                          contentFit="contain"
+                        />
+                      )}
+
+                      <View style={styles.imageNumberBadge}>
+                        <Text style={styles.imageNumberText}>{index + 1}</Text>
+                      </View>
+
+                      <Pressable
+                        onPress={() => removeImage(index)}
+                        style={[
+                          styles.imageRemoveButton,
+                          (uploading || saving || deleting) &&
+                            styles.disabledButton,
+                        ]}
+                        disabled={uploading || saving || deleting}
+                      >
+                        <Text style={styles.imageRemoveText}>Remove</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
               </ScrollView>
             )}
 
             <Text style={styles.helper}>
               Select one or more images from your phone. Images are uploaded
-              securely to Cloudinary.
+              securely to Cloudinary when image uploads are available.
             </Text>
           </Section>
 
@@ -1059,7 +1295,7 @@ export default function ProductForm({
 
           <Section title="Pricing & Inventory">
             <Field
-              label={`Price (${CURRENCY_SYMBOL})`}
+              label={`🔴 Price (${CURRENCY_SYMBOL})`}
               value={price}
               onChangeText={setPrice}
               placeholder="0.00"
@@ -1146,7 +1382,33 @@ export default function ProductForm({
               </View>
             ))}
           </Section>
+          {/* YOUTUBE POSTS */}
 
+          <Section title="YouTube Posts">
+            <Field
+              label="YouTube Post URL"
+              value={youtubePostUrl}
+              onChangeText={setYoutubePostUrl}
+              placeholder="https://youtube.com/..."
+              autoCapitalize="none"
+            />
+
+            <Pressable style={styles.secondaryButton} onPress={addYoutubePost}>
+              <Text style={styles.secondaryButtonText}>+ Add YouTube Post</Text>
+            </Pressable>
+
+            {youtubePostUrls.map((url, index) => (
+              <View key={`${url}-${index}`} style={styles.listItem}>
+                <Text style={styles.listItemUrl} numberOfLines={3}>
+                  {url}
+                </Text>
+
+                <Pressable onPress={() => removeYoutubePost(index)}>
+                  <Text style={styles.removeText}>Remove</Text>
+                </Pressable>
+              </View>
+            ))}
+          </Section>
           {/* PUBLIC PRODUCT PAGE */}
 
           <Section title="Public Product Page">
@@ -1225,7 +1487,7 @@ export default function ProductForm({
               <Pressable
                 style={styles.deleteButton}
                 onPress={confirmDelete}
-                disabled={deleting || saving}
+                disabled={deleting || saving || uploading}
               >
                 {deleting ? (
                   <ActivityIndicator color="#b42318" />
@@ -1239,15 +1501,15 @@ export default function ProductForm({
               <Pressable
                 style={styles.cancelButton}
                 onPress={() => router.replace("/admin/products")}
-                disabled={saving || deleting}
+                disabled={saving || deleting || uploading}
               >
                 <Text style={styles.cancelText}>Cancel</Text>
               </Pressable>
 
               <Pressable
-                style={styles.saveButton}
+                style={[styles.saveButton, uploading && styles.disabledButton]}
                 onPress={saveProduct}
-                disabled={saving || deleting}
+                disabled={saving || deleting || uploading}
               >
                 {saving ? (
                   <ActivityIndicator color="#ffffff" />
@@ -1269,17 +1531,10 @@ export default function ProductForm({
 // REUSABLE COMPONENTS
 // ==========================================================
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
-
       <View style={styles.card}>{children}</View>
     </View>
   );
@@ -1470,6 +1725,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#6d5630",
   },
+
   disabledButton: {
     opacity: 0.6,
   },
@@ -1479,9 +1735,30 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  // -------------------------------------------------------
+
+  cloudinaryNotice: {
+    borderWidth: 1,
+    borderColor: "#e3d1ab",
+    borderRadius: 11,
+    padding: 12,
+    marginBottom: 14,
+    backgroundColor: "#fff8e9",
+  },
+
+  cloudinaryNoticeText: {
+    flexShrink: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    color: "#775b2e",
+  },
+
+  refreshStatusButton: {
+    alignSelf: "flex-start",
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+
   // IMAGE PREVIEWS
-  // -------------------------------------------------------
 
   imagePreviewRow: {
     gap: 12,
@@ -1540,9 +1817,7 @@ const styles = StyleSheet.create({
     color: "#b42318",
   },
 
-  // -------------------------------------------------------
   // GENERAL LIST
-  // -------------------------------------------------------
 
   list: {
     gap: 8,
@@ -1583,9 +1858,7 @@ const styles = StyleSheet.create({
     color: "#b42318",
   },
 
-  // -------------------------------------------------------
   // CATEGORIES
-  // -------------------------------------------------------
 
   categoryCreateRow: {
     flexDirection: "row",
@@ -1679,9 +1952,7 @@ const styles = StyleSheet.create({
     color: "#403d38",
   },
 
-  // -------------------------------------------------------
   // SWITCHES
-  // -------------------------------------------------------
 
   switchRow: {
     minHeight: 64,
@@ -1710,9 +1981,7 @@ const styles = StyleSheet.create({
     color: "#777169",
   },
 
-  // -------------------------------------------------------
   // ACTIONS
-  // -------------------------------------------------------
 
   actions: {
     marginTop: 5,

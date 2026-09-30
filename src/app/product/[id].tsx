@@ -12,7 +12,11 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { CURRENCY_SYMBOL, STORE } from "@/constants/store";
+import {
+  CURRENCY_SYMBOL,
+  CLOUDINARY_FALLBACK_IMAGE,
+  STORE,
+} from "@/constants/store";
 import { notifyCartChanged, supabase } from "@/lib/supabase";
 
 type DisplaySettings = {
@@ -46,6 +50,7 @@ type Product = {
   depth: number | null;
   images: string[];
   video_urls: string[];
+  youtube_post_urls: string[];
   display_settings: DisplaySettings | null;
   available_for_sale: boolean;
 };
@@ -66,6 +71,8 @@ export default function ProductDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [catalogMode, setCatalogMode] = useState(false);
+  const [cloudinaryImagesEnabled, setCloudinaryImagesEnabled] = useState(true);
+
   useEffect(() => {
     if (id) {
       loadProduct();
@@ -98,6 +105,7 @@ export default function ProductDetailScreen() {
         depth,
         images,
         video_urls,
+        youtube_post_urls,
         display_settings,
         available_for_sale
       `,
@@ -108,7 +116,7 @@ export default function ProductDetailScreen() {
 
         supabase
           .from("site_settings")
-          .select("catalog_mode")
+          .select("catalog_mode, cloudinary_images_enabled")
           .eq("id", true)
           .single(),
       ]);
@@ -122,6 +130,9 @@ export default function ProductDetailScreen() {
       }
 
       setCatalogMode(siteSettings?.catalog_mode === true);
+      setCloudinaryImagesEnabled(
+        siteSettings?.cloudinary_images_enabled ?? true,
+      );
 
       if (!productData) {
         setError("Product not found.");
@@ -156,6 +167,14 @@ export default function ProductDetailScreen() {
           : [],
         video_urls: Array.isArray(productData.video_urls)
           ? (productData.video_urls as string[])
+          : [],
+        youtube_post_urls: Array.isArray(productData.youtube_post_urls)
+          ? (productData.youtube_post_urls as string[])
+              .filter(
+                (url): url is string =>
+                  typeof url === "string" && url.trim().length > 0,
+              )
+              .map((url) => url.trim())
           : [],
         display_settings:
           (productData.display_settings as DisplaySettings | null) ?? null,
@@ -402,9 +421,15 @@ export default function ProductDetailScreen() {
 
   const settings = product.display_settings;
 
-  const images = product.images;
+  const images = product.images.filter((image) => {
+    const isCloudinaryImage = image.includes("res.cloudinary.com");
+
+    return !isCloudinaryImage || cloudinaryImagesEnabled;
+  });
 
   const videos = shown(settings, "videos") ? product.video_urls : [];
+
+  const youtubePosts = product.youtube_post_urls;
 
   const salePrice = product.sale_price;
 
@@ -458,9 +483,11 @@ export default function ProductDetailScreen() {
                 }}
               />
             ) : (
-              <View style={styles.noImage}>
-                <Text style={styles.noImageText}>No image</Text>
-              </View>
+              <Image
+                source={CLOUDINARY_FALLBACK_IMAGE}
+                style={styles.mainImage}
+                contentFit="contain"
+              />
             )}
           </View>
 
@@ -515,7 +542,9 @@ export default function ProductDetailScreen() {
                   }
                   style={styles.categoryBadge}
                 >
-                  {category.image_url ? (
+                  {category.image_url &&
+                  (!category.image_url.includes("res.cloudinary.com") ||
+                    cloudinaryImagesEnabled) ? (
                     <Image
                       source={{ uri: category.image_url }}
                       style={styles.categoryImage}
@@ -545,7 +574,9 @@ export default function ProductDetailScreen() {
                   </Text>
                 </>
               ) : (
-                <Text style={styles.price}>{CURRENCY_SYMBOL} {product.price.toFixed(2)}</Text>
+                <Text style={styles.price}>
+                  {CURRENCY_SYMBOL} {product.price.toFixed(2)}
+                </Text>
               )}
             </View>
           )}
@@ -559,7 +590,29 @@ export default function ProductDetailScreen() {
               <Text style={styles.description}>{product.description}</Text>
             </View>
           )}
+          {/* YouTube Posts */}
 
+          {youtubePosts.length > 0 && (
+            <View style={styles.youtubePostsSection}>
+              <Text style={styles.sectionTitle}>YouTube Posts</Text>
+
+              {youtubePosts.map((url, index) => (
+                <Pressable
+                  key={`${url}-${index}`}
+                  style={styles.youtubePostButton}
+                  onPress={() => void openVideo(url)}
+                >
+                  <Text style={styles.youtubePostButtonText}>
+                    ▶ View YouTube post {index + 1}
+                  </Text>
+
+                  <Text style={styles.youtubePostUrl} numberOfLines={1}>
+                    {url}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           {/* Details */}
 
           <View style={styles.details}>
@@ -921,6 +974,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: "#333",
+  },
+
+  /* =======================================================
+   YouTube Posts
+   ======================================================= */
+
+  youtubePostsSection: {
+    marginTop: 28,
+  },
+
+  youtubePostButton: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+
+  youtubePostButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333",
+  },
+
+  youtubePostUrl: {
+    marginTop: 5,
+    fontSize: 11,
+    color: "#888",
   },
 
   /* =======================================================
